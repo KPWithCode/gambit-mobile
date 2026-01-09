@@ -9,6 +9,8 @@ import { LoginScreen } from './src/screens/LoginScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { CollectionScreen } from './src/screens/CollectionScreen';
 import { DeckBuilderScreen } from '@/screens/DeckBuilderScreen';
+import { PackStoreScreen } from '@/screens/PackStoreScreen';
+import { PackOpeningScreen } from '@/screens/PackOpeningScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -52,7 +54,7 @@ function HomeTabs() {
       />
       <Tab.Screen
         name="Packs"
-        component={PlaceholderScreen}
+        component={PackStoreScreen}
         options={{
           tabBarLabel: 'Packs',
           tabBarIcon: ({ color }) => <Text style={{ fontSize: 24 }}>📦</Text>,
@@ -128,11 +130,23 @@ export default function App() {
             <Stack.Screen name="Register" component={RegisterScreen} />
           </>
         ) : (
-          <Stack.Screen name="Home" component={HomeTabs} options={{ 
-            headerShown: true,
-            headerTitle: '', // Removes the "Home" text
-            headerShadowVisible: false, // Optional: Makes the transition to content smoother
-          }}  />
+          <>
+            <Stack.Screen name="Home" component={HomeTabs} options={{
+              headerShown: true,
+              headerTitle: '', // Removes the "Home" text
+              headerShadowVisible: false, // Optional: Makes the transition to content smoother
+            }} />
+
+            <Stack.Screen
+              name="PackOpening"
+              component={PackOpeningScreen}
+              options={{
+                headerShown: false, // Hides header for full-screen feel
+                presentation: 'modal', // Makes it slide up from the bottom
+                animation: 'fade_from_bottom'
+              }}
+            />
+          </>
         )}
       </Stack.Navigator>
     </NavigationContainer>
