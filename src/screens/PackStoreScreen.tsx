@@ -6,7 +6,7 @@ import api from '../lib/api';
 
 
 interface Pack {
-    id: string;
+    type: string;
     name: string;
     price: number;
     description: string;
@@ -33,6 +33,8 @@ export const PackStoreScreen = ({ navigation }: any) => {
       }, []);
       
   const handlePurchase = async (packType: string, price: number) => {
+
+    console.log("SENDING PACK_TYPE TO BACKEND:", packType);
     if (profile && profile.gems < price) {
         Alert.alert('Insufficient Gems', "You don't have enough gems for this pack.");
         return;
@@ -73,10 +75,10 @@ export const PackStoreScreen = ({ navigation }: any) => {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-      {packs.map((pack) => (
+      {packs.map((pack, index) => (
           <TouchableOpacity
-            key={pack.id}
-            onPress={() => handlePurchase(pack.id, pack.price)}
+            key={`pack-${pack.type}-${index}`}
+            onPress={() => handlePurchase(pack.type, pack.price)}
             className="bg-card mb-4 rounded-2xl border border-slate-700 overflow-hidden shadow-lg"
           >
             <View className="p-5 flex-row items-center">

@@ -18,6 +18,7 @@ const RARITY_COLORS = {
 };
 
 export const Card: React.FC<CardProps> = ({ card, onPress, isSelected }) => {
+  if (!card) return <View className="w-full h-full bg-slate-800 rounded-xl" />;
   return (
     <TouchableOpacity 
       onPress={() => onPress?.(card)}

@@ -36,17 +36,21 @@ export const DeckBuilderScreen = () => {
         setIsSaving(true);
         try {
             const payload = {
+                sport: "basketball", // Matches: Sport string `json:"sport"`
                 cards: pendingDeck.map((card, index) => ({
-                    card_id: card.id, // Ensure this matches your backend DeckCard struct
-                    deck_position: index + 1,
+                    // Each object here matches: type DeckCard struct
+                    card_id: card.id,               // Matches `json:"card_id"`
+                    deck_position: index + 1,       // Matches `json:"deck_position"`
                 })),
             };
 
             await api.put('/users/me/deck', payload);
             Alert.alert('Success', 'Deck saved successfully!');
             refetch(); // Refresh collection data to update 'is_in_deck' flags
-        } catch (err) {
-            Alert.alert('Error', 'Failed to save deck');
+        } catch (err: any) {
+            console.error("DEBUG BACKEND REJECTION:", err.response?.data);
+            const errorMessage = err.response?.data?.error || 'Failed to save deck';
+            Alert.alert('Error', errorMessage);
         } finally {
             setIsSaving(false);
         }

@@ -9,6 +9,7 @@ export interface Card {
   rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY' | 'MYTHIC';
   offense: number;
   defense: number;
+  sport: string;
   speed: number;
   rebounding: number;
   three_point: number;

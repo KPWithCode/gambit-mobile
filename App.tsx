@@ -11,6 +11,7 @@ import { CollectionScreen } from './src/screens/CollectionScreen';
 import { DeckBuilderScreen } from '@/screens/DeckBuilderScreen';
 import { PackStoreScreen } from '@/screens/PackStoreScreen';
 import { PackOpeningScreen } from '@/screens/PackOpeningScreen';
+import { BattleScreen } from '@/screens/BattleScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -46,7 +47,7 @@ function HomeTabs() {
       />
       <Tab.Screen
         name="Battle"
-        component={PlaceholderScreen}
+        component={BattleScreen}
         options={{
           tabBarLabel: 'Battle',
           tabBarIcon: ({ color }) => <Text style={{ fontSize: 24 }}>⚔️</Text>,

@@ -7,7 +7,7 @@ import { Card as CardType } from '../types/api';
 export const PackOpeningScreen = ({ route, navigation }: any) => {
   // result comes from the successful api.post('/packs/open') call
   const { result } = route.params;
-  const cards: CardType[] = result.cards_received;
+  const cards: CardType[] = result.cards || [];
   const [revealAll, setRevealAll] = useState(false);
   
   return (
@@ -29,7 +29,7 @@ export const PackOpeningScreen = ({ route, navigation }: any) => {
 
       <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', padding: 10 }}>
         {cards.map((card, index) => (
-          <CardFlip key={`${card.id}-${index}`} card={card} />
+          <CardFlip key={`${card.id}-${index}`} card={card} isParentFlipped={revealAll} />
         ))}
       </ScrollView>
 
