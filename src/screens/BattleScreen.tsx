@@ -46,124 +46,59 @@ export const BattleScreen = ({ navigation }: any) => {
             </View>
 
             {/* 3. LINEUP TRAY - Current Deck */}
-            <View className="bg-slate-900/80 pt-4 pb-8 border-t border-slate-800">
-                <View className="px-6 flex-row justify-between items-end mb-4">
-                    <View>
-                        <Text className="text-slate-500 text-xs font-bold uppercase tracking-widest">{selectedSport} Lineup</Text>
-                        <Text className="text-white text-xl font-black italic">STARTING FIVE</Text>
-                    </View>
+<View className="bg-slate-900/80 pt-6 pb-12 border-t border-slate-800">
+    <View className="px-6 flex-row justify-between items-center mb-6">
+        <View>
+            <Text className="text-slate-500 text-[10px] font-bold uppercase tracking-[2px]">
+                {selectedSport} Lineup
+            </Text>
+            <Text className="text-white text-2xl font-black italic">STARTING FIVE</Text>
+        </View>
+        <TouchableOpacity
+            onPress={() => navigation.navigate('Deck', { sport: selectedSport })}
+            className="bg-primary/20 px-4 py-2 rounded-full border border-primary/40"
+        >
+            <Text className="text-primary text-xs font-black uppercase">Edit Deck</Text>
+        </TouchableOpacity>
+    </View>
+
+    <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false} 
+        // Changed gap to 8 for tighter spacing and increased padding
+        contentContainerStyle={{ paddingHorizontal: 24, gap: 8 }}
+    >
+        {deckLoading ? (
+            <Text className="text-white opacity-50">Fetching lineup...</Text>
+        ) : (
+            <>
+                {deck?.cards?.map((item: any, index: number) => {
+                    if (!item.cards) return null;
+                    return (
+                        <View 
+                            key={`${item.id}-${index}`} 
+                            // INCREASED SIZE: w-32 (128px) makes them significantly taller and wider
+                            className="w-32 aspect-[0.7]"
+                        >
+                            <Card card={item.cards} /> 
+                        </View>
+                    );
+                })}
+
+                {/* Fill remaining empty slots with the same w-32 size */}
+                {Array.from({ length: Math.max(0, 5 - (deck?.cards?.length || 0)) }).map((_, i) => (
                     <TouchableOpacity
-                        // 4. Pass sport to Deck Edit so it knows which sport collection to show
+                        key={`empty-${i}`}
                         onPress={() => navigation.navigate('Deck', { sport: selectedSport })}
+                        className="w-32 aspect-[0.7] rounded-2xl border-2 border-dashed border-slate-800 items-center justify-center bg-slate-950/50"
                     >
-                        <Text className="text-primary font-bold">EDIT DECK</Text>
+                        <Text className="text-slate-800 text-3xl">+</Text>
                     </TouchableOpacity>
-                </View>
-
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
-    {deckLoading ? (
-        <Text className="text-white">Loading Lineup...</Text>
-    ) : (
-        <>
-            {deck?.cards?.map((item: any, index: number) => {
-                console.log(`Position ${item.deck_position} nested card:`, item.cards);
-                // Only render the Card if item.cards actually exists
-                if (!item.cards) return null;
-
-                return (
-                    <View key={`${item.id}-${index}`} className="w-24 aspect-[0.7] opacity-90 scale-95">
-                        <Card card={item.cards} /> 
-                    </View>
-                );
-            })}
-
-            {/* Fill remaining empty slots */}
-            {Array.from({ length: Math.max(0, 5 - (deck?.cards?.length || 0)) }).map((_, i) => (
-                <TouchableOpacity
-                    key={`empty-${i}`}
-                    onPress={() => navigation.navigate('Deck', { sport: selectedSport })}
-                    className="w-24 aspect-[0.7] rounded-lg border-2 border-dashed border-slate-700 items-center justify-center"
-                >
-                    <Text className="text-slate-700 text-2xl">+</Text>
-                </TouchableOpacity>
-            ))}
-        </>
-    )}
-</ScrollView>
-            </View>
+                ))}
+            </>
+        )}
+    </ScrollView>
+</View>
         </View>
     );
-    // return (
-    //     <View className="flex-1 bg-background">
-    //         {/* 1. TOP BAR - Resources */}
-    //         <View className="flex-row justify-between items-center px-6 pt-12 pb-4 bg-slate-900/50">
-    //             <TouchableOpacity className="flex-row items-center bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700">
-    //                 <View className="w-6 h-6 rounded-full bg-blue-500 mr-2 items-center justify-center">
-    //                     <Text className="text-[10px] text-white">LVL</Text>
-    //                 </View>
-    //                 <Text className="text-white font-bold">4,012</Text>
-    //             </TouchableOpacity>
-
-    //             <View className="flex-row gap-3">
-    //                 <View className="flex-row items-center bg-slate-800 px-3 py-1.5 rounded-full border border-amber-500/30">
-    //                     <Text className="text-amber-400 mr-1">💎</Text>
-    //                     <Text className="text-white font-bold">{profile?.gems || 0}</Text>
-    //                 </View>
-    //             </View>
-    //         </View>
-
-    //         {/* 2. HERO SECTION - Play Button */}
-    //         <View className="flex-1 items-center justify-center px-6">
-    //             {/* Future: This background image can change based on the sport */}
-    //             <View className="w-full aspect-square items-center justify-center">
-    //                 {/* Visual Flare */}
-    //                 <View className="absolute w-64 h-64 bg-primary/20 rounded-full blur-3xl" />
-
-    //                 <TouchableOpacity
-    //                     onPress={() => navigation.navigate('Matchmaking')}
-    //                     className="bg-primary w-48 h-48 rounded-full items-center justify-center shadow-2xl border-8 border-white/10"
-    //                     style={{ elevation: 20 }}
-    //                 >
-    //                     <Text className="text-white text-5xl font-black italic tracking-tighter">PLAY</Text>
-    //                     <Text className="text-white/60 font-bold mt-1">RANKED</Text>
-    //                 </TouchableOpacity>
-    //             </View>
-    //         </View>
-
-    //         {/* 3. LINEUP TRAY - Current Deck */}
-    //         <View className="bg-slate-900/80 pt-4 pb-8 border-t border-slate-800">
-    //             <View className="px-6 flex-row justify-between items-end mb-4">
-    //                 <View>
-    //                     <Text className="text-slate-500 text-xs font-bold uppercase tracking-widest">Current Lineup</Text>
-    //                     <Text className="text-white text-xl font-black italic">STARTING FIVE</Text>
-    //                 </View>
-    //                 <TouchableOpacity onPress={() => navigation.navigate('Deck')}>
-    //                     <Text className="text-primary font-bold">EDIT DECK</Text>
-    //                 </TouchableOpacity>
-    //             </View>
-
-    //             <ScrollView
-    //                 horizontal
-    //                 showsHorizontalScrollIndicator={false}
-    //                 contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}
-    //             >
-    //                 {deck?.cards?.map((card: CardType, index: number) => ( // Added types here
-    //                     <View key={`${card.id}-${index}`} className="w-24 aspect-[0.7] opacity-90 scale-95">
-    //                         <Card card={card} />
-    //                     </View>
-    //                 ))}
-    //                 {/* Fill empty slots if deck isn't full */}
-    //                 {Array.from({ length: Math.max(0, 5 - (deck?.cards?.length || 0)) }).map((_, i) => (
-    //                     <TouchableOpacity
-    //                         key={`empty-${i}`}
-    //                         onPress={() => navigation.navigate('Deck')}
-    //                         className="w-24 aspect-[0.7] rounded-lg border-2 border-dashed border-slate-700 items-center justify-center"
-    //                     >
-    //                         <Text className="text-slate-700 text-2xl">+</Text>
-    //                     </TouchableOpacity>
-    //                 ))}
-    //             </ScrollView>
-    //         </View>
-    //     </View>
-    // );
 };

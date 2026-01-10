@@ -46,7 +46,10 @@ export const CardGrid: React.FC<CardGridProps> = ({
       numColumns={2}
       columnWrapperStyle={{ justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 16 }}
       renderItem={({ item }) => (
-        <Card card={item} onPress={onCardPress} isSelected={selectedIds?.includes(item.id)} />
+        <View className='flex-1 px-1'>
+
+          <Card card={item} onPress={onCardPress} isSelected={selectedIds?.includes(item.id)} />
+        </View>
       )}
       refreshControl={
         <RefreshControl

@@ -34,9 +34,11 @@ export const CardFlip: React.FC<CardFlipProps> = ({ card, isParentFlipped }) => 
   
 
   const handleFlip = React.useCallback(() => {
+    // Only flip if it hasn't been flipped yet
     if (isFlipped.value === 0) {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       isFlipped.value = withTiming(1, { duration: 600 }, () => {
+        // Start the rarity glow after the flip completes
         glowOpacity.value = withRepeat(
           withSequence(
             withTiming(0.6, { duration: 1000 }),
@@ -77,10 +79,18 @@ export const CardFlip: React.FC<CardFlipProps> = ({ card, isParentFlipped }) => 
     shadowColor: GLOW_COLORS[card.rarity] || GLOW_COLORS.COMMON,
     shadowRadius: 20,
     shadowOpacity: 1,
-  }));
+  }))
+  
+  const zIndexStyle = useAnimatedStyle(() => {
+    return {
+      // When isFlipped is less than 0.5 (Gambit side), zIndex is 1. 
+      // When it passes 0.5 (Player side), zIndex is 2.
+      zIndex: isFlipped.value > 0.5 ? 2 : 1,
+    };
+  });;
 
   return (
-    <Pressable onPress={handleFlip} className="w-32 aspect-[0.7] m-2">
+    <Pressable onPress={handleFlip} className="w-full h-full bg-red-500/20">
       {/* CARD BACK (Initial State) */}
       <Animated.View 
       style={[glowStyle, { backgroundColor: GLOW_COLORS[card.rarity] || GLOW_COLORS.COMMON }]} 
@@ -88,7 +98,7 @@ export const CardFlip: React.FC<CardFlipProps> = ({ card, isParentFlipped }) => 
     />
 
       <Animated.View 
-      style={frontStyle} 
+      style={[frontStyle, zIndexStyle]}
       className="absolute inset-0 bg-slate-900 rounded-xl border-2 border-primary items-center justify-center shadow-xl"
     >
        <Text className="text-primary font-black text-xl italic">GAMBIT</Text>
@@ -98,7 +108,8 @@ export const CardFlip: React.FC<CardFlipProps> = ({ card, isParentFlipped }) => 
 
       {/* CARD FRONT (The Reveal) */}
       <Animated.View 
-        style={backStyle} 
+        style={[backStyle, zIndexStyle]}
+        pointerEvents={isParentFlipped ? "auto" : "none"}
         className="absolute inset-0"
       >
         {/* Pass custom dimensions to Card if needed, 
