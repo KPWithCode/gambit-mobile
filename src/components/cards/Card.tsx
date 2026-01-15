@@ -24,7 +24,7 @@ export const Card: React.FC<CardProps> = ({ card, onPress, isSelected }) => {
       onPress={() => onPress?.(card)}
       className={`flex-1 rounded-xl border-2 p-1 ${RARITY_COLORS[card.rarity as keyof typeof RARITY_COLORS] || RARITY_COLORS.COMMON}`}
       // className={`rounded-xl border-2 p-1 ${RARITY_COLORS[card.rarity as keyof typeof RARITY_COLORS] || RARITY_COLORS.COMMON}`}
-      style={{ width: '100%',height: '100%', aspectRatio: 0.7 }}
+      style={{ width: '100%', aspectRatio: 0.8 }}
     >
       <View className="flex-1 bg-black/20 rounded-lg overflow-hidden relative">
       {isSelected && (

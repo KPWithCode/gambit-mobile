@@ -43,10 +43,10 @@ export const CardGrid: React.FC<CardGridProps> = ({
     <FlatList
       data={cards}
       keyExtractor={(item) => item.id}
-      numColumns={2}
+      numColumns={3}
       columnWrapperStyle={{ justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 16 }}
       renderItem={({ item }) => (
-        <View className='flex-1 px-1'>
+        <View className='px-2 max-w-[33.33%] '>
 
           <Card card={item} onPress={onCardPress} isSelected={selectedIds?.includes(item.id)} />
         </View>

@@ -11,7 +11,7 @@ import { CollectionScreen } from './src/screens/CollectionScreen';
 import { DeckBuilderScreen } from '@/screens/DeckBuilderScreen';
 import { PackStoreScreen } from '@/screens/PackStoreScreen';
 import { PackOpeningScreen } from '@/screens/PackOpeningScreen';
-import { BattleScreen } from '@/screens/BattleScreen';
+import { BattleScreen } from '@/screens/HomeScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();

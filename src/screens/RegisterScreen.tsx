@@ -117,12 +117,15 @@ export const RegisterScreen = ({ navigation }: any) => {
             error={errors.confirmPassword}
           />
 
+          <View className='items-center'> 
+
           <Button
             title="Create Account"
             onPress={handleRegister}
             loading={loading}
-            className="mt-2"
+            className="mt-2 w-full"
           />
+          </View>
 
           {/* Login Link */}
           <View className="flex-row justify-center mt-6">

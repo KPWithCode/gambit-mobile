@@ -92,13 +92,14 @@ export const LoginScreen = ({ navigation }: any) => {
             secureTextEntry
             error={errors.password}
           />
-
+          <View className='items-center'>
           <Button
             title="Sign In"
             onPress={handleLogin}
             loading={loading}
-            className="mt-2"
+            className="mt-2 w-full "
           />
+          </View>
 
           {/* Register Link */}
           <View className="flex-row justify-center mt-6">
