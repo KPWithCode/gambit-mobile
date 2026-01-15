@@ -3,10 +3,12 @@ export interface Card {
   id: string;
   player_id: number;
   player_name: string;
+  name?: string;
   position: 'PG' | 'SG' | 'SF' | 'PF' | 'C';
   team: string;
   edition: 'BASE' | 'PLAYOFF' | 'MOMENT' | 'ALLSTAR' | 'CHAMPIONSHIP';
   rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY' | 'MYTHIC';
+  type?: 'PLAYER' | 'SPELL' | 'TRAP'; // ← ADD THIS (to distinguish card types)
   offense: number;
   defense: number;
   sport: string;
@@ -16,6 +18,8 @@ export interface Card {
   abilities: Ability[];
   image_url: string;
   season_year: string;
+  trigger?: string; // For trap cards
+  effect_value?: number; // For spell/trap effects
 }
 
 export interface Ability {
@@ -33,6 +37,24 @@ export interface User {
   wins: number;
   losses: number;
   avatar_url?: string;
+}
+
+export interface UserCard {
+  id: string;
+  user_id: string;
+  card_id: string;
+  card_role: 'STARTER' | 'BENCH' | 'STRATEGY';
+  lineup_position?: string;
+  is_in_deck: boolean;
+  deck_position?: number;
+  CardDetails: CollectionCard; // Full card data
+}
+
+export interface DeckResponse {
+  starters: UserCard[];
+  bench: UserCard[];
+  strategy: UserCard[];
+  total: number;
 }
 
 export interface AuthResponse {
@@ -80,17 +102,22 @@ export interface CollectionCard {
   // Full card details embedded
   player_id: number;
   player_name: string;
+  name?: string;
   position: 'PG' | 'SG' | 'SF' | 'PF' | 'C';
   team: string;
   edition: 'BASE' | 'PLAYOFF' | 'MOMENT' | 'ALLSTAR' | 'CHAMPIONSHIP';
   rarity: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY' | 'MYTHIC';
+  type?: 'PLAYER' | 'SPELL' | 'TRAP';
   offense: number;
   defense: number;
+  sport: string;
   speed: number;
   rebounding: number;
   three_point: number;
   abilities: Ability[];
   image_url: string;
   season_year: string;
+  trigger?: string; // ← ADDED
+  effect_value?: number; // ← ADDED
 }
 
