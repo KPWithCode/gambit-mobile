@@ -4,18 +4,22 @@ import { CardGrid } from '../components/cards/CardGrid';
 import { CardFilter } from '../components/cards/CardFilter';
 import { useMyCollection } from '../hooks/useCards';
 import { Card as CardType } from '../types/api';
-import { useAuth } from '../hooks/useAuth'; 
+import { useAuth } from '../hooks/useAuth';
 import { CardDetailModal } from '@/components/cards/CardDetailModal';
 
 type Rarity = 'ALL' | 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY' | 'MYTHIC';
 type Position = 'ALL' | 'PG' | 'SG' | 'SF' | 'PF' | 'C';
+type CardTypeFilter = 'ALL' | 'PLAYER' | 'SPELL' | 'TRAP';
+
 
 export const CollectionScreen = () => {
   const { collection, isLoading, refetch } = useMyCollection();
   const [showFilter, setShowFilter] = useState(false);
-  const { signOut } = useAuth(); 
+  const { signOut } = useAuth();
   const [selectedRarity, setSelectedRarity] = useState<Rarity>('ALL');
   const [selectedPosition, setSelectedPosition] = useState<Position>('ALL');
+  const [selectedType, setSelectedType] = useState<CardTypeFilter>('ALL');
+
   const [selectedCard, setSelectedCard] = useState<CardType | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
 
@@ -23,39 +27,40 @@ export const CollectionScreen = () => {
 
   const filteredCards = useMemo(() => {
     if (!Array.isArray(safeCollection)) return [];
-    
+
     return safeCollection.filter((card) => {
       const matchesRarity = selectedRarity === 'ALL' || card.rarity === selectedRarity;
       const matchesPosition = selectedPosition === 'ALL' || card.position === selectedPosition;
+      const matchesType = selectedType === 'ALL' || card.type === selectedType || (selectedType === 'PLAYER' && !card.type); // ← NEW
       return matchesRarity && matchesPosition;
     });
   }, [safeCollection, selectedRarity, selectedPosition]);
 
-//   const filteredCards = useMemo(() => {
-//     return collection.filter((card) => {
-//       const matchesRarity = selectedRarity === 'ALL' || card.rarity === selectedRarity;
-//       const matchesPosition = selectedPosition === 'ALL' || card.position === selectedPosition;
-//       return matchesRarity && matchesPosition;
-//     });
-//   }, [collection, selectedRarity, selectedPosition]);
+  //   const filteredCards = useMemo(() => {
+  //     return collection.filter((card) => {
+  //       const matchesRarity = selectedRarity === 'ALL' || card.rarity === selectedRarity;
+  //       const matchesPosition = selectedPosition === 'ALL' || card.position === selectedPosition;
+  //       return matchesRarity && matchesPosition;
+  //     });
+  //   }, [collection, selectedRarity, selectedPosition]);
 
-const handleCardPress = (card: CardType) => {
-  setSelectedCard(card);
-  setIsModalVisible(true);
-};
+  const handleCardPress = (card: CardType) => {
+    setSelectedCard(card);
+    setIsModalVisible(true);
+  };
 
   // Temporarily add this to CollectionScreen
-React.useEffect(() => {
+  React.useEffect(() => {
     console.log('Collection type:', typeof collection);
     console.log('Collection is array?', Array.isArray(collection));
     console.log('Collection value:', collection);
   }, [collection]);
-// React.useEffect(() => {
-//   if (collection && collection.length > 0) {
-//     console.log('FIRST CARD KEYS:', Object.keys(collection[0]));
-//   }
-// }, [collection]);
-  
+  // React.useEffect(() => {
+  //   if (collection && collection.length > 0) {
+  //     console.log('FIRST CARD KEYS:', Object.keys(collection[0]));
+  //   }
+  // }, [collection]);
+
   return (
     <View className="flex-1 bg-background">
       {/* Header */}
@@ -78,12 +83,33 @@ React.useEffect(() => {
 
       {/* Filter */}
       {showFilter && (
-        <CardFilter
-          selectedRarity={selectedRarity}
-          selectedPosition={selectedPosition}
-          onRarityChange={setSelectedRarity}
-          onPositionChange={setSelectedPosition}
-        />
+        <View>
+
+          <CardFilter
+            selectedRarity={selectedRarity}
+            selectedPosition={selectedPosition}
+            onRarityChange={setSelectedRarity}
+            onPositionChange={setSelectedPosition}
+          />
+          <View className="px-4 pb-2">
+            <Text className="text-slate-400 text-sm mb-2">Card Type</Text>
+            <View className="flex-row gap-2">
+              {(['ALL', 'PLAYER', 'SPELL', 'TRAP']as CardTypeFilter[]).map((type) => (
+                <TouchableOpacity
+                  key={type}
+                  onPress={() => setSelectedType(type as CardTypeFilter)}
+                  className={`px-4 py-2 rounded-lg ${selectedType === type ? 'bg-primary' : 'bg-slate-800'
+                    }`}
+                >
+                  <Text className={`font-semibold ${selectedType === type ? 'text-white' : 'text-slate-400'
+                    }`}>
+                    {type}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
       )}
 
       {/* Card Grid */}
@@ -94,7 +120,7 @@ React.useEffect(() => {
         onRefresh={refetch}
         emptyMessage="No cards in your collection yet. Open some packs!"
       />
-      <CardDetailModal 
+      <CardDetailModal
         card={selectedCard}
         isVisible={isModalVisible}
         onClose={() => setIsModalVisible(false)}
