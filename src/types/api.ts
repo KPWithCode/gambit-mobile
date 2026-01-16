@@ -18,6 +18,7 @@ export interface Card {
   abilities: Ability[];
   image_url: string;
   season_year: string;
+  description?: string;       // Effect description
   trigger?: string; // For trap cards
   effect_value?: number; // For spell/trap effects
 }

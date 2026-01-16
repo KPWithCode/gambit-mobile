@@ -6,15 +6,20 @@ import { useBattle } from '../hooks/useBattle';
 
 type AnimationType = 'slash' | 'fireball' | 'lightning' | 'rocket' | 'bomb' | 'threearrowdown' | 'exclamation' | 'thumbsup' | null;
 
+type CardType = 'PLAYER' | 'SPELL' | 'TRAP';
+
 export const ArenaScreen = ({ route, navigation }: any) => {
   const { battleId } = route.params;
-  const { battleState, connected, error, submitAction, isMyTurn } = useBattle(battleId);
+  const { battleState, connected, error, submitAction, castSpell, setTrap, isMyTurn } = useBattle(battleId);
   
   // Animation state
   const [isAnimating, setIsAnimating] = useState(false);
   const [currentAnimation, setCurrentAnimation] = useState<AnimationType>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  
+  const [selectedCardType, setSelectedCardType] = useState<CardType | null>(null);
+
+  const [activeTab, setActiveTab] = useState<'PLAYERS' | 'SPELLS' | 'TRAPS'>('PLAYERS');
+
   // Animation refs
   const attackerScale = useRef(new Animated.Value(1)).current;
   const defenderShake = useRef(new Animated.Value(0)).current;
@@ -109,18 +114,53 @@ export const ArenaScreen = ({ route, navigation }: any) => {
     }, 1200);
   };
 
+  // const getAnimationForAction = (action: string, success: boolean, pointsScored: number): AnimationType => {
+  //   // Big score (bomb)
+  //   if (pointsScored >= 3) {
+  //     return 'bomb';
+  //   }
+
+  //   // Miss/Fail
+  //   if (!success) {
+  //     return 'exclamation';
+  //   }
+
+  //   // Map actions to animations
+  //   const actionMap: Record<string, AnimationType> = {
+  //     'FAST_BREAK': 'slash',
+  //     'POST_UP': 'fireball',
+  //     'THREE_POINT': 'rocket',
+  //     'ISOLATION': 'lightning',
+  //     'PICK_AND_ROLL': 'slash',
+  //     'BLOCK': 'exclamation',
+  //   };
+
+  //   return actionMap[action] || 'slash';
+  // };
   const getAnimationForAction = (action: string, success: boolean, pointsScored: number): AnimationType => {
     // Big score (bomb)
     if (pointsScored >= 3) {
       return 'bomb';
     }
-
+  
     // Miss/Fail
     if (!success) {
       return 'exclamation';
     }
+  
+    if (action === 'SPELL_CAST') {
+      return 'fireball';
+    }
+    
+    if (action === 'TRAP_SET') {
+      return 'exclamation';
+    }
 
-    // Map actions to animations
+    if (action === 'TRAP_TRIGGERED') {
+      return 'threearrowdown';
+    }
+  
+    // Existing player actions
     const actionMap: Record<string, AnimationType> = {
       'FAST_BREAK': 'slash',
       'POST_UP': 'fireball',
@@ -129,9 +169,46 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       'PICK_AND_ROLL': 'slash',
       'BLOCK': 'exclamation',
     };
-
+  
     return actionMap[action] || 'slash';
   };
+  
+  // Spell animation mapper
+  const getSpellAnimation = (spellAction: string): AnimationType => {
+    const spellMap: Record<string, AnimationType> = {
+      'SPELL_FAST_BREAK_BOOST': 'lightning',
+      'SPELL_OFFENSIVE_SURGE': 'fireball',
+      'SPELL_DEFENSIVE_WALL': 'exclamation',
+      'SPELL_TEAM_HUSTLE': 'slash',
+      'SPELL_MOMENTUM_SHIFT': 'fireball',
+      'SPELL_HOT_HAND': 'fireball',
+      'SPELL_ALLEY_OOP': 'rocket',
+      'SPELL_FULL_COURT_PRESS': 'exclamation',
+      'SPELL_BUZZER_BEATER': 'rocket',
+      'SPELL_CHAMPIONSHIP_MENTALITY': 'bomb',
+      'SPELL_PLAYOFF_MODE': 'bomb',
+      'SPELL_LEGENDARY_PERFORMANCE': 'bomb',
+    };
+    
+    return spellMap[spellAction] || 'thumbsup';
+  };
+  
+  // Trap animation mapper
+  const getTrapAnimation = (trapAction: string): AnimationType => {
+    const trapMap: Record<string, AnimationType> = {
+      'TRAP_SHOT_BLOCK': 'exclamation',
+      'TRAP_STEAL_ATTEMPT': 'slash',
+      'TRAP_ZONE_DEFENSE': 'exclamation',
+      'TRAP_CHARGE_TAKEN': 'bomb',
+      'TRAP_TIT_FOR_TAT': 'rocket',  // ✅ Your renamed card
+      'TRAP_RATTLED': 'threearrowdown',  // ✅ Your renamed card
+      'TRAP_LOCKDOWN_DEFENSE': 'exclamation',
+      'TRAP_PERFECT_DEFENSE': 'bomb',
+    };
+    
+    return trapMap[trapAction] || 'exclamation';
+  };
+  
 
   const getAnimationSource = (animation: AnimationType) => {
     if (!animation) return null;
@@ -150,9 +227,10 @@ export const ArenaScreen = ({ route, navigation }: any) => {
     return sources[animation];
   };
 
-  const handleCardSelect = (cardId: string) => {
+  const handleCardSelect = (cardId: string, cardType: CardType) => {
     if (!isMyTurn || isAnimating) return;
     setSelectedCardId(cardId);
+    setSelectedCardType(cardType);
   };
 
   const handleActionSubmit = (action: string) => {
@@ -161,8 +239,29 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       return;
     }
     
-    submitAction(action, selectedCardId, 'PG');
-    setSelectedCardId(null); // Reset selection
+    if (selectedCardType === 'PLAYER') {
+      submitAction(action, selectedCardId, 'PG');
+    } else if (selectedCardType === 'SPELL') {
+      castSpell(selectedCardId);
+    } else if (selectedCardType === 'TRAP') {
+      setTrap(selectedCardId);
+    }
+    
+    setSelectedCardId(null);
+    setSelectedCardType(null);
+  };
+
+  // Filter cards by type
+  const getPlayerCards = () => {
+    return battleState?.player1?.deck?.filter((card: any) => card.type === 'PLAYER') || [];
+  };
+  
+  const getSpellCards = () => {
+    return battleState?.player1?.deck?.filter((card: any) => card.type === 'SPELL') || [];
+  };
+  
+  const getTrapCards = () => {
+    return battleState?.player1?.deck?.filter((card: any) => card.type === 'TRAP') || [];
   };
 
   // Loading state
@@ -216,12 +315,12 @@ export const ArenaScreen = ({ route, navigation }: any) => {
             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">You</Text>
             <Text className="text-white text-4xl font-black">{battleState.player1_score}</Text>
           </Animated.View>
-
+  
           {/* Quarter Badge */}
           <View className="bg-yellow-500 px-6 py-3 rounded-full shadow-lg">
             <Text className="text-gray-900 text-2xl font-black">Q{battleState.quarter}</Text>
           </View>
-
+  
           {/* Player 2 Score (with shake animation) */}
           <Animated.View 
             style={{ transform: [{ translateX: defenderShake }] }}
@@ -231,7 +330,7 @@ export const ArenaScreen = ({ route, navigation }: any) => {
             <Text className="text-white text-4xl font-black">{battleState.player2_score}</Text>
           </Animated.View>
         </View>
-
+  
         {/* Turn Indicator */}
         <View className="mt-4 items-center">
           <View className={`px-6 py-2 rounded-full ${isMyTurn ? 'bg-green-600' : 'bg-gray-700'}`}>
@@ -241,7 +340,53 @@ export const ArenaScreen = ({ route, navigation }: any) => {
           </View>
         </View>
       </View>
-
+  
+      {/* ACTIVE EFFECTS DISPLAY */}
+      {battleState.active_effects && battleState.active_effects.length > 0 && (
+        <View className="bg-purple-900/30 px-4 py-3 border-b border-purple-700">
+          <Text className="text-purple-300 text-xs font-bold uppercase tracking-wider mb-2">
+            ✨ Active Effects
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View className="flex-row gap-2">
+              {battleState.active_effects.map((effect: any, i: number) => (
+                <View 
+                  key={i}
+                  className="bg-purple-800/50 px-3 py-2 rounded-lg border border-purple-500"
+                >
+                  <Text className="text-purple-200 text-xs font-bold">{effect.card_name}</Text>
+                  <Text className="text-purple-400 text-xs">
+                    {effect.duration === 'TURN' ? `${effect.turns_left} turn${effect.turns_left > 1 ? 's' : ''}` : effect.duration}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      )}
+  
+      {/* SET TRAPS DISPLAY */}
+      {battleState.set_traps && battleState.set_traps.length > 0 && (
+        <View className="bg-red-900/30 px-4 py-3 border-b border-red-700">
+          <Text className="text-red-300 text-xs font-bold uppercase tracking-wider mb-2">
+            🔒 Active Traps
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View className="flex-row gap-2">
+              {battleState.set_traps.map((trap: any, i: number) => (
+                <View 
+                  key={i}
+                  className="bg-red-800/50 px-3 py-2 rounded-lg border border-red-500"
+                >
+                  <Text className="text-red-200 text-xs font-bold">🃏 Trap Set</Text>
+                  <Text className="text-red-400 text-xs">Turn {trap.set_on_turn}</Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      )}
+  
       {/* OPPONENT DECK (Face Down Cards) */}
       <Animated.View 
         style={{ transform: [{ scale: attackerScale }] }}
@@ -263,7 +408,7 @@ export const ArenaScreen = ({ route, navigation }: any) => {
           </View>
         </ScrollView>
       </Animated.View>
-
+  
       {/* IMPACT ANIMATION LAYER */}
       {currentAnimation && (
         <Animated.View
@@ -278,7 +423,7 @@ export const ArenaScreen = ({ route, navigation }: any) => {
           />
         </Animated.View>
       )}
-
+  
       {/* BATTLE LOG */}
       <View className="flex-1 mx-4 my-3 bg-gray-800 rounded-xl p-4 border border-gray-700">
         <View className="flex-row items-center mb-3">
@@ -289,13 +434,16 @@ export const ArenaScreen = ({ route, navigation }: any) => {
             </Text>
           </View>
         </View>
-
+  
         <ScrollView showsVerticalScrollIndicator={false}>
           {battleState.recent_moves && battleState.recent_moves.length > 0 ? (
             battleState.recent_moves.map((move: any, i: number) => (
               <View 
                 key={i} 
                 className={`mb-2 p-3 rounded-lg border-l-4 ${
+                  move.action === 'SPELL_CAST' ? 'bg-purple-900/30 border-purple-500' :
+                  move.action === 'TRAP_SET' ? 'bg-red-900/30 border-red-500' :
+                  move.action === 'TRAP_TRIGGERED' ? 'bg-orange-900/30 border-orange-500' :
                   move.success ? 'bg-green-900/30 border-green-500' : 'bg-red-900/30 border-red-500'
                 }`}
               >
@@ -317,120 +465,246 @@ export const ArenaScreen = ({ route, navigation }: any) => {
           )}
         </ScrollView>
       </View>
-
-      {/* YOUR HAND */}
-      <View className="bg-gray-800 pt-4 pb-6 border-t-2 border-gray-700">
-        <View className="px-4 mb-3">
-          <Text className="text-white font-bold text-sm uppercase tracking-wider">
-            Your Hand {selectedCardId && '(Card Selected ✓)'}
-          </Text>
+  
+      {/* TAB SWITCHER + CARD DISPLAY */}
+      <View className="bg-gray-800 pt-3 border-t-2 border-gray-700">
+        {/* Tab Buttons */}
+        <View className="flex-row px-4 gap-2 mb-3">
+          <TouchableOpacity 
+            className={`flex-1 py-2 rounded-lg ${activeTab === 'PLAYERS' ? 'bg-blue-600' : 'bg-gray-700'}`}
+            onPress={() => setActiveTab('PLAYERS')}
+          >
+            <Text className={`text-center font-bold text-sm ${activeTab === 'PLAYERS' ? 'text-white' : 'text-gray-400'}`}>
+              👥 Players ({getPlayerCards().length})
+            </Text>
+          </TouchableOpacity>
+  
+          <TouchableOpacity 
+            className={`flex-1 py-2 rounded-lg ${activeTab === 'SPELLS' ? 'bg-purple-600' : 'bg-gray-700'}`}
+            onPress={() => setActiveTab('SPELLS')}
+          >
+            <Text className={`text-center font-bold text-sm ${activeTab === 'SPELLS' ? 'text-white' : 'text-gray-400'}`}>
+              ✨ Spells ({getSpellCards().length})
+            </Text>
+          </TouchableOpacity>
+  
+          <TouchableOpacity 
+            className={`flex-1 py-2 rounded-lg ${activeTab === 'TRAPS' ? 'bg-red-600' : 'bg-gray-700'}`}
+            onPress={() => setActiveTab('TRAPS')}
+          >
+            <Text className={`text-center font-bold text-sm ${activeTab === 'TRAPS' ? 'text-white' : 'text-gray-400'}`}>
+              🔒 Traps ({getTrapCards().length})
+            </Text>
+          </TouchableOpacity>
         </View>
-
+  
+        {/* Card Display Area */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 12 }}
         >
-          {battleState.player1.deck && battleState.player1.deck.length > 0 ? (
-            battleState.player1.deck.map((card: any) => (
-              <TouchableOpacity
-                key={card.id}
-                className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
-                  selectedCardId === card.id
-                    ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-                    : isMyTurn 
-                      ? 'bg-gradient-to-b from-blue-600 to-blue-800 border-2 border-blue-400' 
-                      : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
-                }`}
-                onPress={() => handleCardSelect(card.id)}
-                disabled={!isMyTurn || isAnimating}
-                activeOpacity={0.8}
-              >
-                <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
-                  {card.player_name}
+          {/* PLAYER CARDS */}
+          {activeTab === 'PLAYERS' && getPlayerCards().map((card: any) => (
+            <TouchableOpacity
+              key={card.id}
+              className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
+                selectedCardId === card.id
+                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
+                  : isMyTurn 
+                    ? 'bg-gradient-to-b from-blue-600 to-blue-800 border-2 border-blue-400' 
+                    : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
+              }`}
+              onPress={() => handleCardSelect(card.id, 'PLAYER')}
+              disabled={!isMyTurn || isAnimating}
+              activeOpacity={0.8}
+            >
+              <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
+                {card.player_name}
+              </Text>
+  
+              <View className="flex-1 justify-center space-y-1">
+                <View className="flex-row justify-between items-center">
+                  <Text className="text-gray-300 text-xs">OFF</Text>
+                  <Text className="text-yellow-400 font-bold text-sm">{card.offense}</Text>
+                </View>
+                <View className="flex-row justify-between items-center">
+                  <Text className="text-gray-300 text-xs">DEF</Text>
+                  <Text className="text-blue-400 font-bold text-sm">{card.defense}</Text>
+                </View>
+                <View className="flex-row justify-between items-center">
+                  <Text className="text-gray-300 text-xs">SPD</Text>
+                  <Text className="text-green-400 font-bold text-sm">{card.speed}</Text>
+                </View>
+                <View className="flex-row justify-between items-center">
+                  <Text className="text-gray-300 text-xs">3PT</Text>
+                  <Text className="text-purple-400 font-bold text-sm">{card.three_point}</Text>
+                </View>
+              </View>
+  
+              <View className="mt-2 bg-gray-900/50 py-1 rounded-md">
+                <Text className="text-gray-300 text-xs text-center font-bold">
+                  {card.position}
                 </Text>
-
-                <View className="flex-1 justify-center space-y-1">
-                  <View className="flex-row justify-between items-center">
-                    <Text className="text-gray-300 text-xs">OFF</Text>
-                    <Text className="text-yellow-400 font-bold text-sm">{card.offense}</Text>
-                  </View>
-                  <View className="flex-row justify-between items-center">
-                    <Text className="text-gray-300 text-xs">DEF</Text>
-                    <Text className="text-blue-400 font-bold text-sm">{card.defense}</Text>
-                  </View>
-                  <View className="flex-row justify-between items-center">
-                    <Text className="text-gray-300 text-xs">SPD</Text>
-                    <Text className="text-green-400 font-bold text-sm">{card.speed}</Text>
-                  </View>
-                  <View className="flex-row justify-between items-center">
-                    <Text className="text-gray-300 text-xs">3PT</Text>
-                    <Text className="text-purple-400 font-bold text-sm">{card.three_point}</Text>
-                  </View>
-                </View>
-
-                <View className="mt-2 bg-gray-900/50 py-1 rounded-md">
-                  <Text className="text-gray-300 text-xs text-center font-bold">
-                    {card.position}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))
-          ) : (
-            <Text className="text-gray-500 px-4">No cards in hand</Text>
-          )}
+              </View>
+            </TouchableOpacity>
+          ))}
+  
+          {/* SPELL CARDS */}
+          {activeTab === 'SPELLS' && getSpellCards().map((card: any) => (
+            <TouchableOpacity
+              key={card.id}
+              className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
+                selectedCardId === card.id
+                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
+                  : isMyTurn 
+                    ? 'bg-gradient-to-b from-purple-600 to-purple-800 border-2 border-purple-400' 
+                    : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
+              }`}
+              onPress={() => handleCardSelect(card.id, 'SPELL')}
+              disabled={!isMyTurn || isAnimating}
+              activeOpacity={0.8}
+            >
+              <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
+                {card.name}
+              </Text>
+  
+              <View className="flex-1 justify-center">
+                <Text className="text-purple-200 text-xs" numberOfLines={5}>
+                  {card.description}
+                </Text>
+              </View>
+  
+              <View className="mt-2 bg-purple-900/50 py-1 rounded-md">
+                <Text className="text-purple-300 text-xs text-center font-bold">
+                  {card.rarity}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+  
+          {/* TRAP CARDS */}
+          {activeTab === 'TRAPS' && getTrapCards().map((card: any) => (
+            <TouchableOpacity
+              key={card.id}
+              className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
+                selectedCardId === card.id
+                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
+                  : isMyTurn 
+                    ? 'bg-gradient-to-b from-red-600 to-red-800 border-2 border-red-400' 
+                    : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
+              }`}
+              onPress={() => handleCardSelect(card.id, 'TRAP')}
+              disabled={!isMyTurn || isAnimating}
+              activeOpacity={0.8}
+            >
+              <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
+                {card.name}
+              </Text>
+  
+              <View className="flex-1 justify-center">
+                <Text className="text-red-200 text-xs" numberOfLines={5}>
+                  {card.description}
+                </Text>
+              </View>
+  
+              <View className="mt-2 bg-red-900/50 py-1 rounded-md">
+                <Text className="text-red-300 text-xs text-center font-bold">
+                  {card.trigger}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
       </View>
-
-      {/* ACTION BUTTONS */}
+  
+      {/* CONDITIONAL ACTION BUTTONS */}
       {isMyTurn && (
         <View className="bg-gray-900 px-4 py-4 border-t-2 border-gray-800">
           <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3 text-center">
             {selectedCardId ? 'Choose Your Action' : 'Select a Card First'}
           </Text>
-          <View className="flex-row justify-between gap-2">
+  
+          {/* PLAYER CARD ACTIONS */}
+          {selectedCardType === 'PLAYER' && (
+            <View className="flex-row justify-between gap-2">
+              <TouchableOpacity 
+                className={`flex-1 py-4 rounded-xl shadow-lg ${
+                  selectedCardId && !isAnimating ? 'bg-purple-600 active:bg-purple-700' : 'bg-gray-700'
+                }`}
+                onPress={() => handleActionSubmit('FAST_BREAK')}
+                disabled={!selectedCardId || isAnimating}
+              >
+                <Text className={`font-bold text-center text-sm ${
+                  selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
+                }`}>
+                  ⚡ Fast Break
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                className={`flex-1 py-4 rounded-xl shadow-lg ${
+                  selectedCardId && !isAnimating ? 'bg-orange-600 active:bg-orange-700' : 'bg-gray-700'
+                }`}
+                onPress={() => handleActionSubmit('POST_UP')}
+                disabled={!selectedCardId || isAnimating}
+              >
+                <Text className={`font-bold text-center text-sm ${
+                  selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
+                }`}>
+                  💪 Post Up
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                className={`flex-1 py-4 rounded-xl shadow-lg ${
+                  selectedCardId && !isAnimating ? 'bg-green-600 active:bg-green-700' : 'bg-gray-700'
+                }`}
+                onPress={() => handleActionSubmit('THREE_POINT')}
+                disabled={!selectedCardId || isAnimating}
+              >
+                <Text className={`font-bold text-center text-sm ${
+                  selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
+                }`}>
+                  🎯 3-Pointer
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+  
+          {/* SPELL CARD ACTION */}
+          {selectedCardType === 'SPELL' && (
             <TouchableOpacity 
-              className={`flex-1 py-4 rounded-xl shadow-lg ${
+              className={`py-4 rounded-xl shadow-lg ${
                 selectedCardId && !isAnimating ? 'bg-purple-600 active:bg-purple-700' : 'bg-gray-700'
               }`}
-              onPress={() => handleActionSubmit('FAST_BREAK')}
+              onPress={() => handleActionSubmit('CAST_SPELL')}
               disabled={!selectedCardId || isAnimating}
             >
-              <Text className={`font-bold text-center text-sm ${
+              <Text className={`font-bold text-center text-lg ${
                 selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
               }`}>
-                ⚡ Fast Break
+                ✨ Cast Spell
               </Text>
             </TouchableOpacity>
-            
+          )}
+  
+          {/* TRAP CARD ACTION */}
+          {selectedCardType === 'TRAP' && (
             <TouchableOpacity 
-              className={`flex-1 py-4 rounded-xl shadow-lg ${
-                selectedCardId && !isAnimating ? 'bg-orange-600 active:bg-orange-700' : 'bg-gray-700'
+              className={`py-4 rounded-xl shadow-lg ${
+                selectedCardId && !isAnimating ? 'bg-red-600 active:bg-red-700' : 'bg-gray-700'
               }`}
-              onPress={() => handleActionSubmit('POST_UP')}
+              onPress={() => handleActionSubmit('SET_TRAP')}
               disabled={!selectedCardId || isAnimating}
             >
-              <Text className={`font-bold text-center text-sm ${
+              <Text className={`font-bold text-center text-lg ${
                 selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
               }`}>
-                💪 Post Up
+                🔒 Set Trap
               </Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity 
-              className={`flex-1 py-4 rounded-xl shadow-lg ${
-                selectedCardId && !isAnimating ? 'bg-green-600 active:bg-green-700' : 'bg-gray-700'
-              }`}
-              onPress={() => handleActionSubmit('THREE_POINT')}
-              disabled={!selectedCardId || isAnimating}
-            >
-              <Text className={`font-bold text-center text-sm ${
-                selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-              }`}>
-                🎯 3-Pointer
-              </Text>
-            </TouchableOpacity>
-          </View>
+          )}
         </View>
       )}
     </View>

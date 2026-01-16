@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from './useAuth';
 import { getToken } from '../lib/storage'; // You need this helper
+import api from '@/lib/api';
 
 interface WSMessage {
   type: string;
@@ -29,6 +30,8 @@ interface BattleState {
   current_turn: string;
   quarter: number;
   recent_moves: any[];
+  active_effects?: any[];
+  set_traps?: any[];
 }
 
 export const useBattle = (battleId: string) => {
@@ -40,8 +43,6 @@ export const useBattle = (battleId: string) => {
 
   useEffect(() => {
     if (!battleId || !user) return;
-
-
     const connectWebSocket = async () => {
         // Get token from storage
         const token = await getToken();
@@ -137,12 +138,52 @@ connectWebSocket();
 
     wsRef.current.send(JSON.stringify(message));
   };
+  const castSpell = async (cardId: string, targetCardId?: string) => {
+    if (!battleState || battleState.current_turn !== user?.id || !connected) {
+      console.log('Cannot cast spell - not your turn or not connected');
+      return;
+    }
+
+    try {
+      const response = await api.post(`/battles/${battleId}/spell`, {
+        card_id: cardId,
+        target_card_id: targetCardId
+      });
+
+      console.log('Spell cast:', response.data);
+    } catch (err: any) {
+      console.error('Failed to cast spell:', err);
+      setError(err.response?.data?.error || 'Failed to cast spell');
+    }
+  };
+
+  // ✅ UPDATED: Use api instance for setTrap
+  const setTrap = async (cardId: string) => {
+    if (!battleState || battleState.current_turn !== user?.id || !connected) {
+      console.log('Cannot set trap - not your turn or not connected');
+      return;
+    }
+
+    try {
+      const response = await api.post(`/battles/${battleId}/trap`, {
+        card_id: cardId
+      });
+
+      console.log('Trap set:', response.data);
+    } catch (err: any) {
+      console.error('Failed to set trap:', err);
+      setError(err.response?.data?.error || 'Failed to set trap');
+    }
+  };
+
 
   return {
     battleState,
     connected,
     error,
     submitAction,
+    castSpell,
+    setTrap,
     isMyTurn: battleState?.current_turn === user?.id
   };
 };
