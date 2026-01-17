@@ -4,6 +4,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { View, ActivityIndicator, Text, TouchableOpacity, Alert } from 'react-native';
+import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { useAuth } from './src/hooks/useAuth';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
@@ -12,7 +13,15 @@ import { DeckBuilderScreen } from '@/screens/DeckBuilderScreen';
 import { PackStoreScreen } from '@/screens/PackStoreScreen';
 import { PackOpeningScreen } from '@/screens/PackOpeningScreen';
 import { BattleScreen } from '@/screens/HomeScreen';
+import { BattleResultsScreen } from '@/screens/BattleResultsScreen';
+import { MatchmakingScreen } from './src/screens/MatchmakingScreen';
+import { ArenaScreen } from './src/screens/ArenaScreen';
 
+
+
+const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL || 'https://original-bear-224.convex.cloud';
+console.log('🔗 Convex URL:', CONVEX_URL);
+const convex = new ConvexReactClient(CONVEX_URL);
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
@@ -95,7 +104,7 @@ function PlaceholderScreen() {
   );
 }
 
-export default function App() {
+function AppContent() {
   const { isAuthenticated, isLoading, initAuth } = useAuth();
 
   useEffect(() => {
@@ -147,9 +156,45 @@ export default function App() {
                 animation: 'fade_from_bottom'
               }}
             />
+
+            <Stack.Screen
+              name="Matchmaking"
+              component={MatchmakingScreen}
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+              }}
+            />
+
+            <Stack.Screen
+              name="Arena"
+              component={ArenaScreen}
+              options={{
+                headerShown: false,
+                presentation: 'fullScreenModal',
+              }}
+            />
+
+            <Stack.Screen
+              name="BattleResults"
+              component={BattleResultsScreen}
+              options={{
+                headerShown: false,
+                presentation: 'modal',
+              }}
+            />
+
           </>
         )}
       </Stack.Navigator>
     </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <ConvexProvider client={convex}>
+      <AppContent />
+    </ConvexProvider>
   );
 }
