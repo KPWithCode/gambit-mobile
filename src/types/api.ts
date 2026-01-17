@@ -1,5 +1,6 @@
 // API Response Types
 export interface Card {
+  user_card_id?: string;
   id: string;
   player_id: number;
   player_name: string;
@@ -21,6 +22,7 @@ export interface Card {
   description?: string;       // Effect description
   trigger?: string; // For trap cards
   effect_value?: number; // For spell/trap effects
+  effect?: any;
 }
 
 export interface Ability {
@@ -100,6 +102,7 @@ export interface CollectionCard {
   acquired_at: string;
   is_in_deck: boolean;
   deck_position?: number;
+  card_role: 'PLAYER' | 'STRATEGY';
   // Full card details embedded
   player_id: number;
   player_name: string;
