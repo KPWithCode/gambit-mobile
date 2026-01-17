@@ -5,8 +5,10 @@ import { Card as CardType } from '../../types/api';
 interface CardProps {
   card: CardType;
   onPress?: (card: CardType) => void;
+  onScrap?: (card: CardType) => void;
   size?: 'sm' | 'md' | 'lg';
   isSelected?: boolean;
+  showScrapButton?: boolean;
 }
 
 const RARITY_COLORS = {
@@ -24,11 +26,24 @@ const CARD_TYPE_COLORS = {
   TRAP: 'bg-red-900/20',
 };
 
-export const Card: React.FC<CardProps> = ({ card, onPress, isSelected }) => {
+export const SCRAP_VALUES = {
+  COMMON: 5,
+  RARE: 25,
+  EPIC: 75,
+  LEGENDARY: 200,
+  MYTHIC: 350,
+};
+
+export const Card: React.FC<CardProps> = ({ card, onPress,onScrap, isSelected, showScrapButton = false }) => {
   if (!card) return <View className="w-full h-full bg-slate-800 rounded-xl" />;
 
   // Check if card is a spell/trap
   const isSpellOrTrap = card.type === 'SPELL' || card.type === 'TRAP';
+
+  const handleScrapPress = (e: any) => {
+    e.stopPropagation(); // Prevent triggering onPress
+    onScrap?.(card);
+  };
 
   return (
     <TouchableOpacity 
@@ -43,6 +58,15 @@ export const Card: React.FC<CardProps> = ({ card, onPress, isSelected }) => {
               <Text className="text-white font-bold">✓</Text>
             </View>
           </View>
+        )}
+          {showScrapButton && (
+          <TouchableOpacity
+            onPress={handleScrapPress}
+            className="absolute top-1 right-1 z-30 bg-red-600 rounded-full w-7 h-7 items-center justify-center border-2 border-white"
+            style={{ elevation: 5 }}
+          >
+            <Text className="text-white font-bold text-xs">✕</Text>
+          </TouchableOpacity>
         )}
 
         {/* Card Image */}

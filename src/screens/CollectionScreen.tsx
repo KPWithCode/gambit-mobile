@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { CardGrid } from '../components/cards/CardGrid';
 import { CardFilter } from '../components/cards/CardFilter';
 import { useMyCollection } from '../hooks/useCards';
 import { Card as CardType } from '../types/api';
 import { useAuth } from '../hooks/useAuth';
 import { CardDetailModal } from '@/components/cards/CardDetailModal';
+
 
 type Rarity = 'ALL' | 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY' | 'MYTHIC';
 type Position = 'ALL' | 'PG' | 'SG' | 'SF' | 'PF' | 'C';
@@ -36,6 +37,11 @@ export const CollectionScreen = () => {
     });
   }, [safeCollection, selectedRarity, selectedPosition]);
 
+  const handleCardPress = (card: CardType) => {
+    setSelectedCard(card);
+    setIsModalVisible(true);
+  };
+
   //   const filteredCards = useMemo(() => {
   //     return collection.filter((card) => {
   //       const matchesRarity = selectedRarity === 'ALL' || card.rarity === selectedRarity;
@@ -44,10 +50,6 @@ export const CollectionScreen = () => {
   //     });
   //   }, [collection, selectedRarity, selectedPosition]);
 
-  const handleCardPress = (card: CardType) => {
-    setSelectedCard(card);
-    setIsModalVisible(true);
-  };
 
   // Temporarily add this to CollectionScreen
   React.useEffect(() => {
@@ -71,6 +73,8 @@ export const CollectionScreen = () => {
             {filteredCards.length} / {collection.length} cards
           </Text>
         </View>
+
+       
         <TouchableOpacity
           onPress={() => setShowFilter(!showFilter)}
           className="bg-primary px-4 py-2 rounded-lg"
@@ -84,7 +88,6 @@ export const CollectionScreen = () => {
       {/* Filter */}
       {showFilter && (
         <View>
-
           <CardFilter
             selectedRarity={selectedRarity}
             selectedPosition={selectedPosition}
@@ -124,6 +127,7 @@ export const CollectionScreen = () => {
         card={selectedCard}
         isVisible={isModalVisible}
         onClose={() => setIsModalVisible(false)}
+        onScrap={refetch}
       />
     </View>
   );

@@ -5,6 +5,7 @@ import { useDeck } from '../hooks/useCards'; // Import the deck hook
 import { CardGrid } from '../components/cards/CardGrid';
 import { Card as CardType } from '../types/api';
 import api from '../lib/api';
+import { mutate as globalMutate } from 'swr';
 
 type DeckSection = 'starters' | 'bench' | 'strategy';
 
@@ -27,7 +28,7 @@ export const DeckBuilderScreen = () => {
       const loadedStarters: (CardType | null)[] = [null, null, null, null, null];
       savedDeck.starters.forEach((card: any) => {
         const posIndex = POSITIONS.indexOf(card.lineup_position || card.CardDetails?.position);
-        if (posIndex >= 0 && posIndex < 5) {
+        if (posIndex >= 0) {
           // Map UserCard to Card type
           loadedStarters[posIndex] = {
             id: card.card_id,
@@ -48,13 +49,21 @@ export const DeckBuilderScreen = () => {
       } as CardType));
       setBench(loadedBench);
 
-      // Load strategy
-      const loadedStrategy = savedDeck.strategy.map((card: any) => ({
-        id: card.card_id,
-        name: card.CardDetails?.name || card.CardDetails?.player_name || '',
-        ...card.CardDetails,
+      const loadedStrategy = savedDeck.strategy.map((userCard: any) => ({
+        id: userCard.id,  // ← Use user_card ID (unique instance)
+        card_id: userCard.card_id,  // ← Keep reference to template
+        name: userCard.CardDetails?.name || userCard.CardDetails?.player_name || '',
+        ...userCard.CardDetails,
       } as CardType));
       setStrategy(loadedStrategy);
+
+      // // Load strategy
+      // const loadedStrategy = savedDeck.strategy.map((card: any) => ({
+      //   id: card.card_id,
+      //   name: card.CardDetails?.name || card.CardDetails?.player_name || '',
+      //   ...card.CardDetails,
+      // } as CardType));
+      // setStrategy(loadedStrategy);
     }
   }, [savedDeck]);
 
@@ -71,9 +80,16 @@ export const DeckBuilderScreen = () => {
 
   // Get all selected card IDs
   const selectedIds = useMemo(() => {
-    const starterIds = starters.filter(Boolean).map(c => c!.id);
-    const benchIds = bench.map(c => c.id);
-    const strategyIds = strategy.map(c => c.id);
+    const starterIds = starters
+      .filter(Boolean)
+      .map(c => (c as any).user_card_id || c!.id);
+    
+    const benchIds = bench
+      .map(c => (c as any).user_card_id || c.id);
+    
+    const strategyIds = strategy
+      .map(c => (c as any).user_card_id || c.id);
+    
     return [...starterIds, ...benchIds, ...strategyIds];
   }, [starters, bench, strategy]);
 
@@ -83,62 +99,169 @@ export const DeckBuilderScreen = () => {
     return starterCount + bench.length + strategy.length;
   }, [starters, bench, strategy]);
 
-  // Handle card selection
   const handleToggleCard = (card: CardType) => {
-    const isSelected = selectedIds.includes(card.id);
-
+    // Get the unique instance ID for this card
+    const cardInstanceId = (card as any).user_card_id || card.id;
+    const isSelected = selectedIds.includes(cardInstanceId);
+  
     if (isSelected) {
-      setStarters(starters.map(c => c?.id === card.id ? null : c));
-      setBench(bench.filter(c => c.id !== card.id));
-      setStrategy(strategy.filter(c => c.id !== card.id));
+      // Remove by comparing user_card_id
+      setStarters(starters.map(c => {
+        if (!c) return null;
+        const starterInstanceId = (c as any).user_card_id || c.id;
+        return starterInstanceId === cardInstanceId ? null : c;
+      }));
+      
+      setBench(bench.filter(c => {
+        const benchInstanceId = (c as any).user_card_id || c.id;
+        return benchInstanceId !== cardInstanceId;
+      }));
+      
+      setStrategy(strategy.filter(c => {
+        const strategyInstanceId = (c as any).user_card_id || c.id;
+        return strategyInstanceId !== cardInstanceId;
+      }));
       return;
     }
-
+  
+    // ADD CARD - rest stays the same
     if (activeSection === 'starters') {
       const cardPosition = card.position;
-    const positionIndex = POSITIONS.indexOf(cardPosition);
-    
-    if (positionIndex === -1) {
-      Alert.alert('Invalid Position', `This card's position (${cardPosition}) is not valid for starting lineup.`);
-      return;
-    }
-    if (starters[positionIndex] !== null) {
-      Alert.alert(
-        'Position Occupied',
-        `${POSITIONS[positionIndex]} position is already filled by ${starters[positionIndex]?.player_name}. Remove that card first.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Replace',
-            onPress: () => {
-              const newStarters = [...starters];
-              newStarters[positionIndex] = card;
-              setStarters(newStarters);
+      const positionIndex = POSITIONS.indexOf(cardPosition);
+      
+      if (positionIndex === -1) {
+        Alert.alert('Invalid Position', `This card's position (${cardPosition}) is not valid for starting lineup.`);
+        return;
+      }
+      
+      if (starters[positionIndex] !== null) {
+        Alert.alert(
+          'Position Occupied',
+          `${POSITIONS[positionIndex]} position is already filled. Remove that card first or replace it.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Replace',
+              onPress: () => {
+                const newStarters = [...starters];
+                newStarters[positionIndex] = card;
+                setStarters(newStarters);
+              },
             },
-          },
-        ]
-      );
-      return;
-    }
-
+          ]
+        );
+        return;
+      }
+  
       const newStarters = [...starters];
       newStarters[positionIndex] = card;
       setStarters(newStarters);
+      
     } else if (activeSection === 'bench') {
+      if (card.type !== 'PLAYER' && card.type) {
+        Alert.alert('Invalid Card', 'Only player cards can be added to the bench.');
+        return;
+      }
+      
       if (bench.length >= 3) {
         Alert.alert('Bench Full', 'You can only have 3 bench players.');
         return;
       }
+      
       setBench([...bench, card]);
+      
     } else if (activeSection === 'strategy') {
+      if (card.type !== 'SPELL' && card.type !== 'TRAP') {
+        Alert.alert('Invalid Card', 'Only spell and trap cards can be added to strategy.');
+        return;
+      }
+      
       if (strategy.length >= 12) {
         Alert.alert('Strategy Full', 'You can only have 12 strategy cards.');
         return;
       }
+      
       setStrategy([...strategy, card]);
     }
   };
 
+  // const handleToggleCard = (card: CardType) => {
+  //   const isInStarters = starters.some(c => c?.id === card.id);
+  //   const isInBench = bench.some(c => c.id === card.id);
+  //   const isInStrategy = strategy.some(c => (c as any).card_id === card.id || c.id === card.id);
+    
+  //   const isSelected = isInStarters || isInBench || isInStrategy;
+  
+  //   if (isSelected) {
+  //     // Remove card from whichever section it's in
+  //     setStarters(starters.map(c => c?.id === card.id ? null : c));
+  //   setBench(bench.filter(c => c.id !== card.id));
+  //   setStrategy(strategy.filter(c => (c as any).card_id !== card.id && c.id !== card.id));
+  //   return;
+  //   }
+  
+  //   // ADD CARD - Check which section is active
+  //   if (activeSection === 'starters') {
+  //     const cardPosition = card.position;
+  //     const positionIndex = POSITIONS.indexOf(cardPosition);
+      
+  //     if (positionIndex === -1) {
+  //       Alert.alert('Invalid Position', `This card's position (${cardPosition}) is not valid for starting lineup.`);
+  //       return;
+  //     }
+      
+  //     if (starters[positionIndex] !== null) {
+  //       Alert.alert(
+  //         'Position Occupied',
+  //         `${POSITIONS[positionIndex]} position is already filled. Remove that card first or replace it.`,
+  //         [
+  //           { text: 'Cancel', style: 'cancel' },
+  //           {
+  //             text: 'Replace',
+  //             onPress: () => {
+  //               const newStarters = [...starters];
+  //               newStarters[positionIndex] = card;
+  //               setStarters(newStarters);
+  //             },
+  //           },
+  //         ]
+  //       );
+  //       return;
+  //     }
+  
+  //     const newStarters = [...starters];
+  //     newStarters[positionIndex] = card;
+  //     setStarters(newStarters);
+      
+  //   } else if (activeSection === 'bench') {
+  //     // ONLY add PLAYER cards to bench
+  //     if (card.type !== 'PLAYER' && card.type) {
+  //       Alert.alert('Invalid Card', 'Only player cards can be added to the bench.');
+  //       return;
+  //     }
+      
+  //     if (bench.length >= 3) {
+  //       Alert.alert('Bench Full', 'You can only have 3 bench players.');
+  //       return;
+  //     }
+      
+  //     setBench([...bench, card]);
+      
+  //   } else if (activeSection === 'strategy') {
+  //     // ONLY add SPELL/TRAP cards to strategy
+  //     if (card.type !== 'SPELL' && card.type !== 'TRAP') {
+  //       Alert.alert('Invalid Card', 'Only spell and trap cards can be added to strategy.');
+  //       return;
+  //     }
+      
+  //     if (strategy.length >= 12) {
+  //       Alert.alert('Strategy Full', 'You can only have 12 strategy cards.');
+  //       return;
+  //     }
+      
+  //     setStrategy([...strategy, card]);
+  //   }
+  // };
   const handleSaveDeck = async () => {
     const starterCount = starters.filter(Boolean).length;
     
@@ -163,19 +286,22 @@ export const DeckBuilderScreen = () => {
         sport: "basketball",
         cards: [
           ...starters.filter(Boolean).map((card, index) => ({
+            user_card_id: (card as any).user_card_id || card!.id,
             card_id: card!.id,
             deck_position: index + 1,
             card_role: 'STARTER',
             lineup_position: POSITIONS[index],
           })),
           ...bench.map((card, index) => ({
+            user_card_id: (card as any).user_card_id || card.id,
             card_id: card.id,
             deck_position: 5 + index + 1,
             card_role: 'BENCH',
             lineup_position: '',
           })),
           ...strategy.map((card, index) => ({
-            card_id: card.id,
+            user_card_id: (card as any).user_card_id || card.id,  // ← Use instance ID
+            card_id: card.id,  // Template ID
             deck_position: 5 + bench.length + index + 1,
             card_role: 'STRATEGY',
             lineup_position: '',
@@ -195,6 +321,136 @@ export const DeckBuilderScreen = () => {
     }
   };
 
+  const handleClearDeck = async () => {
+    Alert.alert(
+      'Clear Deck',
+      'Are you sure you want to remove all cards from your deck?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              console.log('🧹 Clearing deck...');
+              
+              // Clear locally first
+              setStarters([null, null, null, null, null]);
+              setBench([]);
+              setStrategy([]);
+              
+              // Send empty deck to backend
+              await api.put('/users/me/deck', {
+                sport: "basketball",
+                cards: []
+              });
+              
+              console.log('✅ Deck cleared on backend');
+              
+              // Clear SWR cache for deck endpoint
+              await globalMutate('/users/me/deck?sport=basketball', null, { revalidate: true });
+              
+              // Refetch collection (updates is_in_deck flags)
+              await refetch();
+              
+              console.log('✅ All caches cleared');
+              
+              Alert.alert('Success', 'Deck cleared successfully!');
+              
+            } catch (err: any) {
+              console.error('❌ Clear deck error:', err.response?.data);
+              Alert.alert('Error', 'Failed to clear deck');
+            }
+          },
+        },
+      ]
+    );
+  };
+  // const handleClearDeck = async () => {
+  //   Alert.alert(
+  //     'Clear Deck',
+  //     'Are you sure you want to remove all cards from your deck?',
+  //     [
+  //       { text: 'Cancel', style: 'cancel' },
+  //       {
+  //         text: 'Clear',
+  //         style: 'destructive',
+  //         onPress: async () => {
+  //           try {
+  //             console.log('🧹 Clearing deck...');
+              
+  //             // Clear locally first
+  //             setStarters([null, null, null, null, null]);
+  //             setBench([]);
+  //             setStrategy([]);
+              
+  //             // Send empty deck to backend
+  //             await api.put('/users/me/deck', {
+  //               sport: "basketball",
+  //               cards: []
+  //             });
+              
+  //             console.log('✅ Deck cleared');
+              
+  //             // Refetch collection (updates is_in_deck flags)
+  //             await refetch();
+              
+  //             Alert.alert('Success', 'Deck cleared successfully!');
+              
+  //           } catch (err: any) {
+  //             console.error('❌ Clear deck error:', err.response?.data);
+  //             Alert.alert('Error', 'Failed to clear deck');
+  //           }
+  //         },
+  //       },
+  //     ]
+  //   );
+  // };
+
+  // const handleClearDeck = async () => {
+  //   Alert.alert(
+  //     'Clear Deck',
+  //     'Are you sure you want to remove all cards from your deck?',
+  //     [
+  //       { text: 'Cancel', style: 'cancel' },
+  //       {
+  //         text: 'Clear',
+  //         style: 'destructive',
+  //         onPress: async () => {
+  //           try {
+  //             console.log('🧹 Clearing deck...');
+              
+  //             // ✅ Clear locally first
+  //             setStarters([null, null, null, null, null]);
+  //             setBench([]);
+  //             setStrategy([]);
+              
+  //             // ✅ Send empty deck to backend
+  //             const payload = {
+  //               sport: "basketball",
+  //               cards: [] // Empty array should clear the deck
+  //             };
+              
+              
+  //             const response = await api.put('/users/me/deck', payload);
+  //             console.log('✅ Backend response:', response.data);
+              
+  //             Alert.alert('Success', 'Deck cleared successfully!');
+              
+  //             // ✅ Refresh collection to update is_in_deck flags
+  //             await refetch();
+  //             console.log('✅ Collection refreshed');
+              
+  //           } catch (err: any) {
+  //             console.error('❌ Clear deck error:', err.response?.data);
+  //             Alert.alert('Error', 'Failed to clear deck');
+  //           }
+  //         },
+  //       },
+  //     ]
+  //   );
+  // };
+
   const isLoading = collectionLoading || deckLoading;
 
   return (
@@ -202,7 +458,14 @@ export const DeckBuilderScreen = () => {
       {/* Header with Section Tabs */}
       <View className="p-4 bg-card">
         <Text className="text-white text-2xl font-bold mb-4">Build Your Deck</Text>
-        
+        {totalCards > 0 && (
+          <TouchableOpacity
+            onPress={handleClearDeck}
+            className="bg-red-500/20 px-3 py-2 rounded-lg border border-red-500/40"
+          >
+            <Text className="text-red-400 text-xs font-bold">Clear Deck</Text>
+          </TouchableOpacity>
+        )}
         <View className="flex-row gap-2 mb-2">
           <TouchableOpacity
             onPress={() => setActiveSection('starters')}
@@ -328,9 +591,9 @@ export const DeckBuilderScreen = () => {
         {activeSection === 'bench' && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View className="flex-row gap-2">
-              {bench.map((card) => (
+              {bench.map((card,  index) => (
                 <TouchableOpacity
-                  key={card.id}
+                key={`bench_${card.id}_${index}`}
                   onPress={() => handleToggleCard(card)}
                   className="w-16 h-20 bg-primary/20 border border-primary rounded-lg items-center justify-center"
                 >
@@ -352,9 +615,9 @@ export const DeckBuilderScreen = () => {
         {activeSection === 'strategy' && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View className="flex-row gap-2">
-              {strategy.map((card) => (
+              {strategy.map((card, index) => (
                 <TouchableOpacity
-                  key={card.id}
+                  key={`strategy_${card.id}_${index}`}
                   onPress={() => handleToggleCard(card)}
                   className="w-16 h-20 bg-purple-600/20 border border-purple-500 rounded-lg items-center justify-center"
                 >

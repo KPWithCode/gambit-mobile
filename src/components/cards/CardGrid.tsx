@@ -6,6 +6,8 @@ import { Card as CardType } from '../../types/api';
 interface CardGridProps {
   cards: CardType[];
   onCardPress?: (card: CardType) => void;
+  onScrap?: (card: CardType) => void;
+  showScrapButton?: boolean;  // ← ADD THIS
   selectedIds?: string[];
   loading?: boolean;
   onRefresh: () => void; // New Prop
@@ -16,6 +18,8 @@ export const CardGrid: React.FC<CardGridProps> = ({
   cards,
   onCardPress,
   selectedIds,
+  onScrap,
+  showScrapButton = false,
   loading = false,
   onRefresh,
   emptyMessage = 'No cards found',
@@ -48,7 +52,7 @@ export const CardGrid: React.FC<CardGridProps> = ({
       renderItem={({ item }) => (
         <View className='px-2 max-w-[33.33%] '>
 
-          <Card card={item} onPress={onCardPress} isSelected={selectedIds?.includes(item.id)} />
+          <Card card={item} onPress={onCardPress} onScrap={onScrap} showScrapButton={showScrapButton} isSelected={selectedIds?.includes(item.id)} />
         </View>
       )}
       refreshControl={
@@ -66,22 +70,22 @@ export const CardGrid: React.FC<CardGridProps> = ({
       }
     />
   );
-  // return (
-  //   <FlatList
-  //     data={cards}
-  //     keyExtractor={(item) => item.id}
-  //     numColumns={2}
-  //     columnWrapperStyle={{ gap: 12 }}
-  //     contentContainerStyle={{ padding: 16, gap: 12 }}
-  //     renderItem={({ item }) => (
-  //       <TouchableOpacity
-  //         onPress={() => onCardPress?.(item)}
-  //         activeOpacity={0.8}
-  //         className="flex-1"
-  //       >
-  //         <Card card={item} size="medium" />
-  //       </TouchableOpacity>
-  //     )}
-  //   />
-  // );
 };
+// return (
+//   <FlatList
+//     data={cards}
+//     keyExtractor={(item) => item.id}
+//     numColumns={2}
+//     columnWrapperStyle={{ gap: 12 }}
+//     contentContainerStyle={{ padding: 16, gap: 12 }}
+//     renderItem={({ item }) => (
+//       <TouchableOpacity
+//         onPress={() => onCardPress?.(item)}
+//         activeOpacity={0.8}
+//         className="flex-1"
+//       >
+//         <Card card={item} size="medium" />
+//       </TouchableOpacity>
+//     )}
+//   />
+// );
