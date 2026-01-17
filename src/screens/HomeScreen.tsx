@@ -9,21 +9,38 @@ export const BattleScreen = ({ navigation }: any) => {
   const [selectedSport, setSelectedSport] = useState('basketball');
   const { deck, isLoading: deckLoading, refetch } = useDeck();
 
-  // Calculate total deck size
-  const totalCards = deck 
-    ? (deck.starters?.length || 0) + (deck.bench?.length || 0) + (deck.strategy?.length || 0)
-    : 0;
-
   const starterCount = deck?.starters?.length || 0;
-  const isDeckValid = starterCount === 5 && totalCards >= 15 && totalCards <= 20;
+  const benchCount = deck?.bench?.length || 0;
+  const strategyCount = deck?.strategy?.length || 0;
+  const totalCards = starterCount + benchCount + strategyCount;
 
+  const isDeckValid = 
+    starterCount === 5 && 
+    strategyCount >= 7 && 
+    strategyCount <= 12 && 
+    totalCards >= 15 && 
+    totalCards <= 20;
+    console.log("🎯 Deck Validation:", {
+      starterCount,
+      benchCount,
+      strategyCount,
+      totalCards,
+      isDeckValid
+    });
   // Refetch deck when screen comes into focus
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
+      console.log("BattleScreen Focused - Refreshing Deck Data");
       refetch();
     });
     return unsubscribe;
   }, [navigation, refetch]);
+
+  useEffect(() => {
+    if (deck) {
+      console.log("Current Deck Data:", JSON.stringify(deck, null, 2));
+    }
+  }, [deck]);
 
   const handlePlayPress = () => {
     if (!isDeckValid) {
@@ -36,10 +53,19 @@ export const BattleScreen = ({ navigation }: any) => {
             { text: 'Build Deck', onPress: () => navigation.navigate('Deck') }
           ]
         );
+      } else if (strategyCount < 7) {  // ✅ CHECK STRATEGY COUNT
+        Alert.alert(
+          'Incomplete Deck',
+          `You need at least 7 strategy cards. You have ${strategyCount}. Add more strategy cards.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Build Deck', onPress: () => navigation.navigate('Deck') }
+          ]
+        );
       } else if (totalCards < 15) {
         Alert.alert(
           'Incomplete Deck',
-          `You need at least 15 total cards. You have ${totalCards}. Add more bench or strategy cards.`,
+          `You need at least 15 total cards. You have ${totalCards}. Add more cards.`,
           [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Build Deck', onPress: () => navigation.navigate('Deck') }
@@ -164,11 +190,10 @@ export const BattleScreen = ({ navigation }: any) => {
               {/* Show starters */}
               {deck?.starters?.map((userCard: any, index: number) => (
                 <View key={`starter-${index}`} className="w-32 aspect-[0.7]">
-                  <Card card={userCard.CardDetails} />
+                  <Card card={userCard} />
                   <View className="absolute top-2 left-2 bg-primary px-2 py-1 rounded">
                     <Text className="text-white text-[10px] font-bold">
-                      {userCard.LineupPosition || userCard.CardDetails?.position}
-                    </Text>
+                    {userCard.lineup_position || userCard.position}                    </Text>
                   </View>
                 </View>
               ))}
