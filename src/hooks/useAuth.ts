@@ -2,10 +2,16 @@ import { useAuthStore } from '../store/authstore';
 import api from '../lib/api';
 import { AuthResponse, User } from '../types/api';
 import { API_URL } from '@/utils/constants';
+import { useEffect } from 'react';
 
 export const useAuth = () => {
   const { user, isAuthenticated, isLoading, login, logout, updateUser, initAuth } = useAuthStore();
 
+  useEffect(() => {
+    console.log('🔍 User object details:', JSON.stringify(user, null, 2));
+    console.log('🔍 User keys:', user ? Object.keys(user) : 'no user');
+  }, [user]);
+  
   const register = async (email: string, password: string, username: string) => {
     try {
       const response = await api.post<AuthResponse>('/auth/register', {

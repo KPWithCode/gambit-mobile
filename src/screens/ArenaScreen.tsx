@@ -1,15 +1,66 @@
 // src/screens/ArenaScreen.tsx
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Animated } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Animated,
+  Image,
+  ImageBackground,
+  Dimensions,
+  StyleSheet,
+} from 'react-native';
+import {
+  GestureDetector,
+  Gesture,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
+import ReanimatedAnimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
 import LottieView from 'lottie-react-native';
 import { useMutation } from 'convex/react';
 import { api as convexApi } from '../../convex/_generated/api';
 import { useConvexBattle } from '../hooks/useConvexBattle';
-import api from '../lib/api'; 
+import api from '../lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import * as ScreenOrientation from 'expo-screen-orientation';
 
 type AnimationType = 'slash' | 'fireball' | 'lightning' | 'rocket' | 'bomb' | 'threearrowdown' | 'exclamation' | 'thumbsup' | null;
 type CardType = 'PLAYER' | 'SPELL' | 'TRAP';
+
+const COLORS = {
+  bg: '#1a0e0a',
+  battlefield: '#3d2215',
+  fieldZone: '#2a1a10',
+  divider: '#b8860b',
+  dividerLight: '#d4a44c',
+  endTurnActive: '#b8860b',
+  endTurnInactive: '#333',
+  handArea: '#1c1210',
+  hud: '#0d0806',
+  text: '#e8d5b0',
+  gold: '#f5c542',
+  playerCard: '#1a3a5c',
+  spellCard: '#3a1a5c',
+  trapCard: '#5c1a1a',
+  cardBorder: '#b8860b',
+  dropZoneGlow: 'rgba(184,134,11,0.3)',
+};
+
+const FIELD_DROP_THRESHOLD_Y = -80;
+
+interface PlayedCard {
+  card: any;
+  cardType: CardType;
+  action?: string;
+}
 
 export const ArenaScreen = ({ route, navigation }: any) => {
   const { battleId } = route.params;
@@ -23,11 +74,29 @@ export const ArenaScreen = ({ route, navigation }: any) => {
   const [turnTimeLeft, setTurnTimeLeft] = useState(30);
   const hasFinished = useRef(false);
 
+  // Played cards tracking
+  const [playedCards, setPlayedCards] = useState<PlayedCard[]>([]);
+  const [opponentPlayedCards, setOpponentPlayedCards] = useState<PlayedCard[]>([]);
+
+  // Draw deck + hand management
+  const [hand, setHand] = useState<any[]>([]);
+  const [drawPile, setDrawPile] = useState<any[]>([]);
+  const hasDealt = useRef(false);
+
+  // Drag state
+  const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
+  const [draggingCardType, setDraggingCardType] = useState<CardType | null>(null);
+  const [isDraggingOverField, setIsDraggingOverField] = useState(false);
+  const [showActionOverlay, setShowActionOverlay] = useState(false);
+  const [pendingDropCard, setPendingDropCard] = useState<any>(null);
+  const [pendingDropCardType, setPendingDropCardType] = useState<CardType | null>(null);
+
   // Animation state
   const [isAnimating, setIsAnimating] = useState(false);
   const [currentAnimation, setCurrentAnimation] = useState<AnimationType>(null);
   const [lastActionCard, setLastActionCard] = useState<any>(null);
   const [showActionFeedback, setShowActionFeedback] = useState(false);
+  const [lastActionText, setLastActionText] = useState('');
 
   // Animation refs
   const attackerScale = useRef(new Animated.Value(1)).current;
@@ -35,19 +104,70 @@ export const ArenaScreen = ({ route, navigation }: any) => {
   const impactOpacity = useRef(new Animated.Value(0)).current;
   const scoreFlash = useRef(new Animated.Value(1)).current;
 
+  // Lock to landscape on mount
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+
+  // Deal initial hand: 3 starters (PLAYER) + 1 spell/trap, rest go to draw pile
+  useEffect(() => {
+    if (!battleState?.player1?.deck || hasDealt.current) return;
+    hasDealt.current = true;
+
+    const deck = [...battleState.player1.deck];
+    const players = deck.filter((c: any) => c.type === 'PLAYER');
+    const spellsTraps = deck.filter((c: any) => c.type === 'SPELL' || c.type === 'TRAP');
+
+    // Pick 3 random starters
+    const shuffledPlayers = players.sort(() => Math.random() - 0.5);
+    const starters = shuffledPlayers.slice(0, 3);
+    const remainingPlayers = shuffledPlayers.slice(3);
+
+    // Pick 1 random spell/trap
+    const shuffledST = spellsTraps.sort(() => Math.random() - 0.5);
+    const starterST = shuffledST.slice(0, 1);
+    const remainingST = shuffledST.slice(1);
+
+    const startingHand = [...starters, ...starterST];
+    const pile = [...remainingPlayers, ...remainingST].sort(() => Math.random() - 0.5);
+
+    setHand(startingHand);
+    setDrawPile(pile);
+  }, [battleState?.player1?.deck]);
+
+  // Draw 1 card at the start of your turn
+  const prevTurn = useRef<number | null>(null);
+  useEffect(() => {
+    if (!battleState?.current_turn || !isMyTurn) return;
+    if (prevTurn.current === battleState.current_turn) return;
+    prevTurn.current = battleState.current_turn;
+
+    // Don't draw on the very first turn (already dealt)
+    if (battleState.current_turn <= 1) return;
+
+    setDrawPile(prev => {
+      if (prev.length === 0) return prev;
+      const [drawn, ...rest] = prev;
+      setHand(h => [...h, drawn]);
+      return rest;
+    });
+  }, [battleState?.current_turn, isMyTurn]);
+
   // Turn timer
   useEffect(() => {
     if (!isMyTurn || !battleState) return;
-    
+
     setTurnTimeLeft(30);
     const timer = setInterval(() => {
       setTurnTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          // Auto-submit random action when time runs out
-          const playerCards = getPlayerCards();
-          if (playerCards.length > 0 && !selectedCardId) {
-            const randomCard = playerCards[Math.floor(Math.random() * playerCards.length)];
+          const handPlayers = hand.filter((c: any) => c.type === 'PLAYER');
+          if (handPlayers.length > 0 && !selectedCardId) {
+            const randomCard = handPlayers[Math.floor(Math.random() * handPlayers.length)];
             submitAction('FAST_BREAK', randomCard.id, 'PG');
           }
           return 0;
@@ -62,11 +182,21 @@ export const ArenaScreen = ({ route, navigation }: any) => {
   // Watch for battle moves and trigger animations
   useEffect(() => {
     if (!battleState?.recent_moves || battleState.recent_moves.length === 0) return;
-    
+
     const lastMove = battleState.recent_moves[battleState.recent_moves.length - 1];
-    
+
     if (lastMove && !isAnimating) {
       triggerMoveAnimation(lastMove);
+
+      // Track opponent played cards from moves
+      if (lastMove.player !== user?.id) {
+        const oppDeck = battleState?.player2?.deck || [];
+        const card = oppDeck.find((c: any) => c.id === lastMove.cardId);
+        if (card) {
+          const cardType: CardType = card.type || 'PLAYER';
+          setOpponentPlayedCards(prev => [...prev, { card, cardType, action: lastMove.action }]);
+        }
+      }
     }
   }, [battleState?.recent_moves?.length]);
 
@@ -112,23 +242,22 @@ export const ArenaScreen = ({ route, navigation }: any) => {
         });
       }, 2000);
 
-    } catch (error) {
-      console.error('Failed to sync battle result:', error);
+    } catch (err) {
+      console.error('Failed to sync battle result:', err);
       setTimeout(() => navigation.goBack(), 2000);
     }
   };
 
   const triggerMoveAnimation = (move: any) => {
     setIsAnimating(true);
-    
-    // Find the card that made the move
+
     const playerDeck = battleState?.player1?.deck || [];
     const card = playerDeck.find((c: any) => c.id === move.cardId);
-    
+
     setLastActionCard(card);
     setShowActionFeedback(true);
+    setLastActionText(move.description || '');
 
-    // Scale animation
     Animated.sequence([
       Animated.timing(attackerScale, {
         toValue: 1.15,
@@ -142,11 +271,10 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       }),
     ]).start();
 
-    // Impact animation
     setTimeout(() => {
       const animation = getAnimationForAction(move.action, move.success, move.pointsScored);
       setCurrentAnimation(animation);
-      
+
       Animated.timing(impactOpacity, {
         toValue: 1,
         duration: 150,
@@ -165,7 +293,6 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       });
     }, 300);
 
-    // Shake if hit
     if (move.success) {
       setTimeout(() => {
         Animated.sequence([
@@ -177,7 +304,6 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       }, 400);
     }
 
-    // Score flash
     if (move.pointsScored > 0) {
       setTimeout(() => {
         Animated.sequence([
@@ -198,20 +324,20 @@ export const ArenaScreen = ({ route, navigation }: any) => {
     if (!success) return 'exclamation';
     if (action === 'SPELL_CAST') return 'fireball';
     if (action === 'TRAP_TRIGGERED') return 'threearrowdown';
-    
+
     const actionMap: Record<string, AnimationType> = {
       'FAST_BREAK': 'lightning',
       'POST_UP': 'fireball',
       'THREE_POINT': 'rocket',
       'ISOLATION': 'slash',
     };
-    
+
     return actionMap[action] || 'slash';
   };
 
   const getAnimationSource = (animation: AnimationType) => {
     if (!animation) return null;
-    
+
     const sources: Record<string, any> = {
       'slash': require('../../assets/animations/slash.json'),
       'fireball': require('../../assets/animations/fireball.json'),
@@ -222,59 +348,95 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       'exclamation': require('../../assets/animations/exclamation.json'),
       'thumbsup': require('../../assets/animations/thumbsup.json'),
     };
-    
+
     return sources[animation];
   };
 
-  const handleCardSelect = (cardId: string, cardType: CardType) => {
-    if (!isMyTurn || isAnimating) return;
-    setSelectedCardId(cardId);
-    setSelectedCardType(cardType);
-  };
-
   const handleActionSubmit = (action: string) => {
-    if (!isMyTurn || !selectedCardId || isAnimating) {
-      alert('Please select a card first!');
-      return;
+    if (!pendingDropCard || isAnimating) return;
+
+    if (pendingDropCardType === 'PLAYER') {
+      submitAction(action, pendingDropCard.id, 'PG');
+    } else if (pendingDropCardType === 'SPELL') {
+      castSpell(pendingDropCard.id);
+    } else if (pendingDropCardType === 'TRAP') {
+      setTrap(pendingDropCard.id);
     }
-    
-    if (selectedCardType === 'PLAYER') {
-      submitAction(action, selectedCardId, 'PG');
-    } else if (selectedCardType === 'SPELL') {
-      castSpell(selectedCardId);
-    } else if (selectedCardType === 'TRAP') {
-      setTrap(selectedCardId);
-    }
-    
+
+    setPlayedCards(prev => [...prev, { card: pendingDropCard, cardType: pendingDropCardType!, action }]);
+    removeFromHand(pendingDropCard.id);
+    setShowActionOverlay(false);
+    setPendingDropCard(null);
+    setPendingDropCardType(null);
     setSelectedCardId(null);
     setSelectedCardType(null);
   };
 
-  const getPlayerCards = () => battleState?.player1?.deck?.filter((card: any) => card.type === 'PLAYER') || [];
-  const getSpellCards = () => battleState?.player1?.deck?.filter((card: any) => card.type === 'SPELL') || [];
-  const getTrapCards = () => battleState?.player1?.deck?.filter((card: any) => card.type === 'TRAP') || [];
+  const handleEndTurn = () => {
+    if (!isMyTurn || isAnimating) return;
+
+    const handPlayers = hand.filter((c: any) => c.type === 'PLAYER');
+    if (handPlayers.length > 0) {
+      const randomCard = handPlayers[Math.floor(Math.random() * handPlayers.length)];
+      submitAction('FAST_BREAK', randomCard.id, 'PG');
+    }
+  };
+
+  const removeFromHand = useCallback((cardId: string) => {
+    setHand(prev => prev.filter(c => c.id !== cardId));
+  }, []);
+
+  const handleCardDrop = useCallback((card: any, cardType: CardType) => {
+    if (cardType === 'SPELL') {
+      castSpell(card.id);
+      setPlayedCards(prev => [...prev, { card, cardType, action: 'CAST_SPELL' }]);
+      removeFromHand(card.id);
+    } else if (cardType === 'TRAP') {
+      setTrap(card.id);
+      setPlayedCards(prev => [...prev, { card, cardType, action: 'SET_TRAP' }]);
+      removeFromHand(card.id);
+    } else {
+      setPendingDropCard(card);
+      setPendingDropCardType(cardType);
+      setShowActionOverlay(true);
+    }
+    setDraggingCardId(null);
+    setDraggingCardType(null);
+    setIsDraggingOverField(false);
+  }, [castSpell, setTrap, removeFromHand]);
+
+  // Draw a card manually (tap deck)
+  const handleDrawCard = useCallback(() => {
+    if (!isMyTurn || drawPile.length === 0) return;
+    setDrawPile(prev => {
+      if (prev.length === 0) return prev;
+      const [drawn, ...rest] = prev;
+      setHand(h => [...h, drawn]);
+      return rest;
+    });
+  }, [isMyTurn, drawPile]);
 
   // Loading states
   if (!connected) {
     return (
-      <View className="flex-1 bg-gray-900 items-center justify-center">
-        <ActivityIndicator size="large" color="#10b981" />
-        <Text className="text-white text-xl mt-4">Connecting to battle...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: COLORS.bg }]}>
+        <ActivityIndicator size="large" color={COLORS.gold} />
+        <Text style={[styles.loadingText, { color: COLORS.text }]}>Connecting to battle...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View className="flex-1 bg-gray-900 items-center justify-center px-6">
-        <Text className="text-6xl mb-4">⚠️</Text>
-        <Text className="text-red-500 text-xl font-bold text-center mb-2">Connection Error</Text>
-        <Text className="text-gray-400 text-center mb-6">{error}</Text>
-        <TouchableOpacity 
+      <View style={[styles.loadingContainer, { backgroundColor: COLORS.bg }]}>
+        <Text style={{ fontSize: 48, marginBottom: 16 }}>!</Text>
+        <Text style={{ color: '#ef4444', fontSize: 18, fontWeight: 'bold', marginBottom: 8 }}>Connection Error</Text>
+        <Text style={{ color: COLORS.text, textAlign: 'center', marginBottom: 24 }}>{error}</Text>
+        <TouchableOpacity
           onPress={() => navigation.goBack()}
-          className="bg-green-600 px-8 py-4 rounded-xl"
+          style={{ backgroundColor: COLORS.endTurnActive, paddingHorizontal: 32, paddingVertical: 16, borderRadius: 12 }}
         >
-          <Text className="text-white font-bold text-lg">Return to Lobby</Text>
+          <Text style={{ color: COLORS.text, fontWeight: 'bold', fontSize: 16 }}>Return to Lobby</Text>
         </TouchableOpacity>
       </View>
     );
@@ -282,1304 +444,1033 @@ export const ArenaScreen = ({ route, navigation }: any) => {
 
   if (!battleState) {
     return (
-      <View className="flex-1 bg-gray-900 items-center justify-center">
-        <ActivityIndicator size="large" color="#10b981" />
-        <Text className="text-white text-xl mt-4">Loading battle...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: COLORS.bg }]}>
+        <ActivityIndicator size="large" color={COLORS.gold} />
+        <Text style={[styles.loadingText, { color: COLORS.text }]}>Loading battle...</Text>
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-gray-900">
-      {/* SCOREBOARD */}
-      <View className="bg-gray-800 px-6 py-4 border-b-2 border-gray-700">
-        <View className="flex-row justify-between items-center">
-          <Animated.View style={{ transform: [{ scale: scoreFlash }] }} className="flex-1">
-            <Text className="text-gray-400 text-xs">YOU</Text>
-            <Text className="text-white text-3xl font-black">{battleState.player1_score}</Text>
-          </Animated.View>
-
-          <View className="bg-yellow-500 px-5 py-2 rounded-full">
-            <Text className="text-gray-900 text-xl font-black">Q{battleState.quarter}</Text>
-          </View>
-
-          <Animated.View style={{ transform: [{ translateX: defenderShake }] }} className="flex-1 items-end">
-            <Text className="text-gray-400 text-xs">OPP</Text>
-            <Text className="text-white text-3xl font-black">{battleState.player2_score}</Text>
-          </Animated.View>
-        </View>
-
-        {/* Turn indicator with timer */}
-        <View className="mt-3 flex-row items-center justify-center gap-3">
-          {isMyTurn && (
-            <View className={`w-12 h-12 rounded-full items-center justify-center ${
-              turnTimeLeft <= 10 ? 'bg-red-600' : 'bg-blue-600'
-            }`}>
-              <Text className="text-white text-lg font-black">{turnTimeLeft}</Text>
-            </View>
-          )}
-          
-          <View className={`px-6 py-2 rounded-full ${isMyTurn ? 'bg-green-600' : 'bg-gray-700'}`}>
-            <Text className={`font-bold text-sm ${isMyTurn ? 'text-white' : 'text-gray-400'}`}>
-              {isMyTurn ? '🎯 YOUR TURN' : "⏳ OPPONENT'S TURN"}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* OPPONENT'S FIELD (face-down cards) */}
-      <View className="bg-gray-800/30 px-4 py-3">
-        <Text className="text-gray-500 text-xs mb-2">Opponent's Field</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View className="flex-row gap-2">
-            {battleState.player2.deck?.slice(0, 7).map((card: any, i: number) => (
-              <View 
-                key={`opp_${i}`}
-                className="w-14 h-20 bg-gradient-to-b from-red-800 to-red-900 rounded-lg items-center justify-center border-2 border-red-700"
-              >
-                <Text className="text-red-500 text-3xl">🃏</Text>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ImageBackground
+        source={require('../../assets/images/battlearena.png')}
+        style={styles.root}
+        resizeMode="cover"
+      >
+        {/* ===== TOP HUD BAR ===== */}
+        <View style={styles.hudBar}>
+          <View style={styles.hudInner}>
+            {/* Opponent side */}
+            <Animated.View style={[styles.hudSide, { transform: [{ translateX: defenderShake }] }]}>
+              <View style={styles.heroPortrait}>
+                <Text style={styles.heroPortraitText}>OPP</Text>
               </View>
-            ))}
-          </View>
-        </ScrollView>
-      </View>
+              <Text style={styles.hudScore}>{battleState.player2_score}</Text>
+            </Animated.View>
 
-      {/* BATTLEFIELD */}
-      <View className="flex-1 bg-gradient-to-b from-gray-800 to-gray-900 items-center justify-center relative">
-        {/* VS Badge */}
-        <View className="absolute top-4 bg-yellow-500 w-14 h-14 rounded-full items-center justify-center z-10">
-          <Text className="text-gray-900 text-xl font-black">VS</Text>
+            {/* Center: Quarter + Turn */}
+            <View style={styles.hudCenter}>
+              <View style={styles.quarterBadge}>
+                <Text style={styles.quarterText}>Q{battleState.quarter}</Text>
+              </View>
+              <Text style={[styles.turnText, { color: isMyTurn ? COLORS.gold : '#887766' }]}>
+                {isMyTurn ? 'YOUR TURN' : "OPPONENT'S TURN"}
+              </Text>
+            </View>
+
+            {/* Your side */}
+            <Animated.View style={[styles.hudSide, styles.hudRight, { transform: [{ scale: scoreFlash }] }]}>
+              <Text style={[styles.hudScore, { color: COLORS.gold }]}>{battleState.player1_score}</Text>
+              <View style={[styles.heroPortrait, { borderColor: COLORS.gold }]}>
+                <Text style={styles.heroPortraitText}>YOU</Text>
+              </View>
+            </Animated.View>
+          </View>
         </View>
 
-        {/* Action Feedback */}
-        {showActionFeedback && lastActionCard && battleState.recent_moves && battleState.recent_moves.length > 0 && (
-          <View className="absolute top-20 bg-black/80 px-6 py-3 rounded-xl border-2 border-yellow-500">
-            <Text className="text-white font-bold text-center">
-              {lastActionCard.player_name || lastActionCard.name}
-            </Text>
-            <Text className="text-yellow-400 text-sm text-center mt-1">
-              {battleState.recent_moves[battleState.recent_moves.length - 1].description}
-            </Text>
-          </View>
-        )}
+        {/* ===== MAIN BATTLEFIELD ===== */}
+        <View style={styles.battlefieldOuter}>
 
-        {/* Impact Animation */}
-        {currentAnimation && (
-          <Animated.View
-            style={{ opacity: impactOpacity }}
-            className="absolute inset-0 items-center justify-center pointer-events-none z-50"
+          {/* Center battlefield — transparent so BG shows through */}
+          <View style={styles.battleSurface}>
+
+            {/* Opponent's Field */}
+            <Animated.View style={[styles.fieldHalf, { transform: [{ scale: attackerScale }] }]}>
+              <View style={styles.fieldInner}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fieldCardsRow}>
+                  {opponentPlayedCards.length > 0 ? (
+                    opponentPlayedCards.map((played, i) => {
+                      const isTrap = played.cardType === 'TRAP';
+                      return (
+                        <View key={`opp_${i}`} style={[styles.fieldCard, {
+                          backgroundColor: isTrap ? '#2a1010ee' : (played.cardType === 'SPELL' ? COLORS.spellCard + 'ee' : COLORS.playerCard + 'ee'),
+                          borderColor: isTrap ? '#5c1a1a' : COLORS.cardBorder,
+                        }]}>
+                          {isTrap ? (
+                            <Text style={{ color: '#8b3030', fontSize: 24, fontWeight: '900' }}>?</Text>
+                          ) : (
+                            <>
+                              {played.card.image_url && (
+                                <Image source={{ uri: played.card.image_url }} style={styles.fieldCardImage} resizeMode="cover" />
+                              )}
+                              <View style={styles.fieldCardOverlay}>
+                                <Text style={styles.fieldCardName} numberOfLines={1}>
+                                  {played.card.player_name || played.card.name}
+                                </Text>
+                              </View>
+                              {played.card.offense != null && (
+                                <>
+                                  <View style={styles.fieldStatLeft}>
+                                    <Text style={styles.fieldStatText}>{played.card.offense}</Text>
+                                  </View>
+                                  <View style={styles.fieldStatRight}>
+                                    <Text style={styles.fieldStatText}>{played.card.defense}</Text>
+                                  </View>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </View>
+                      );
+                    })
+                  ) : (
+                    <Text style={styles.fieldEmptyText}>Opponent's field</Text>
+                  )}
+                </ScrollView>
+              </View>
+            </Animated.View>
+
+            {/* ═══ ORNAMENTAL DIVIDER ═══ */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerWing} />
+              <View style={styles.dividerCenter}>
+                <View style={styles.dividerGem} />
+              </View>
+              <View style={styles.dividerWing} />
+            </View>
+
+            {/* Your Field */}
+            <View style={[styles.fieldHalf, {
+              backgroundColor: isDraggingOverField ? 'rgba(184,134,11,0.12)' : 'transparent',
+            }]}>
+              {isDraggingOverField && <View style={styles.dropGlowBorder} />}
+              <View style={styles.fieldInner}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.fieldCardsRow}>
+                  {playedCards.length > 0 ? (
+                    playedCards.map((played, i) => (
+                      <View key={`my_${i}`} style={[styles.fieldCard, {
+                        backgroundColor: played.cardType === 'TRAP' ? COLORS.trapCard + 'ee' :
+                          played.cardType === 'SPELL' ? COLORS.spellCard + 'ee' : COLORS.playerCard + 'ee',
+                        borderColor: COLORS.cardBorder,
+                      }]}>
+                        {played.card.image_url && (
+                          <Image source={{ uri: played.card.image_url }} style={styles.fieldCardImage} resizeMode="cover" />
+                        )}
+                        <View style={styles.fieldCardOverlay}>
+                          <Text style={styles.fieldCardName} numberOfLines={1}>
+                            {played.card.player_name || played.card.name}
+                          </Text>
+                        </View>
+                        {played.card.offense != null && (
+                          <>
+                            <View style={styles.fieldStatLeft}>
+                              <Text style={styles.fieldStatText}>{played.card.offense}</Text>
+                            </View>
+                            <View style={styles.fieldStatRight}>
+                              <Text style={styles.fieldStatText}>{played.card.defense}</Text>
+                            </View>
+                          </>
+                        )}
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.fieldEmptyText}>
+                      {isDraggingOverField ? 'Drop here!' : 'Drag cards here'}
+                    </Text>
+                  )}
+                </ScrollView>
+              </View>
+            </View>
+
+            {/* Action Feedback */}
+            {showActionFeedback && lastActionText ? (
+              <View style={styles.actionFeedbackOverlay}>
+                <Text style={styles.actionFeedbackText}>{lastActionText}</Text>
+              </View>
+            ) : null}
+
+            {/* Battle Log */}
+            {battleState.recent_moves && battleState.recent_moves.length > 0 && (
+              <View style={styles.battleLog}>
+                {battleState.recent_moves.slice(-2).map((move: any, i: number) => (
+                  <Text key={i} style={{ color: move.success ? '#7cb86a' : '#b86a6a', fontSize: 10 }} numberOfLines={1}>
+                    {move.description}
+                  </Text>
+                ))}
+              </View>
+            )}
+
+            {/* Lottie Animation Overlay */}
+            {currentAnimation && (
+              <Animated.View style={[styles.lottieOverlay, { opacity: impactOpacity }]} pointerEvents="none">
+                <LottieView
+                  source={getAnimationSource(currentAnimation)}
+                  autoPlay
+                  loop={false}
+                  style={{ width: 220, height: 220 }}
+                />
+              </Animated.View>
+            )}
+          </View>
+
+          {/* Right: End Turn */}
+          <View style={styles.boardEdgeRight}>
+            <TouchableOpacity
+              style={[styles.endTurnButton, {
+                backgroundColor: isMyTurn ? 'rgba(61,42,21,0.9)' : 'rgba(26,21,16,0.9)',
+                borderColor: isMyTurn ? COLORS.gold : '#443322',
+              }]}
+              onPress={handleEndTurn}
+              disabled={!isMyTurn || isAnimating}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.endTurnLabel, { color: isMyTurn ? COLORS.gold : '#554433' }]}>
+                END{'\n'}TURN
+              </Text>
+            </TouchableOpacity>
+
+            {isMyTurn && (
+              <View style={[styles.timerBubble, {
+                borderColor: turnTimeLeft <= 10 ? '#cc3333' : COLORS.divider,
+                backgroundColor: turnTimeLeft <= 10 ? 'rgba(74,21,21,0.9)' : 'rgba(42,26,16,0.9)',
+              }]}>
+                <Text style={[styles.timerText, { color: turnTimeLeft <= 10 ? '#ff5555' : COLORS.gold }]}>
+                  {turnTimeLeft}
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* ===== BOTTOM: YOUR HAND ===== */}
+        <View style={styles.handTray}>
+          {/* Draw pile on the left */}
+          <TouchableOpacity
+            style={[styles.drawPile, {
+              borderColor: isMyTurn && drawPile.length > 0 ? COLORS.gold : '#443322',
+              opacity: drawPile.length > 0 ? 1 : 0.4,
+            }]}
+            onPress={handleDrawCard}
+            disabled={!isMyTurn || drawPile.length === 0}
+            activeOpacity={0.7}
           >
-            <LottieView
-              source={getAnimationSource(currentAnimation)}
-              autoPlay
-              loop={false}
-              style={{ width: 300, height: 300 }}
-            />
-          </Animated.View>
-        )}
+            <Text style={styles.drawPileIcon}>?</Text>
+            <Text style={styles.drawPileCount}>{drawPile.length}</Text>
+            {isMyTurn && drawPile.length > 0 && (
+              <View style={styles.drawPileGlow} />
+            )}
+          </TouchableOpacity>
 
-        {/* Battle Log (Compact) */}
-        <ScrollView 
-          className="absolute bottom-4 left-4 right-4 max-h-32 bg-black/60 rounded-lg p-3"
-          showsVerticalScrollIndicator={false}
-        >
-          {battleState.recent_moves && battleState.recent_moves.slice(-3).map((move: any, i: number) => (
-            <Text 
-              key={i}
-              className={`text-xs mb-1 ${move.success ? 'text-green-400' : 'text-red-400'}`}
-            >
-              {move.description}
-            </Text>
-          ))}
-        </ScrollView>
-      </View>
+          {/* Hand cards — fanned from center */}
+          <View style={styles.handCardsArea}>
+            {hand.map((card: any, index: number) => {
+              const cardType: CardType = card.type || 'PLAYER';
+              const totalCards = hand.length;
+              // Fan angle: spread cards in an arch
+              const midIndex = (totalCards - 1) / 2;
+              const angle = (index - midIndex) * 4; // degrees per card
+              const yOffset = Math.abs(index - midIndex) * 6; // arch curve
 
-      {/* YOUR FIELD (Selected card shows here) */}
-      <View className="bg-gray-800/30 px-4 py-3">
-        <Text className="text-gray-500 text-xs mb-2">Your Field</Text>
-        <View className="items-center">
-          {selectedCardId ? (
-            <View className="w-24 h-32 bg-gradient-to-b from-blue-600 to-blue-800 rounded-xl border-4 border-yellow-400 items-center justify-center">
-              <Text className="text-white text-xs font-bold text-center px-2">
-                {getPlayerCards().find(c => c.id === selectedCardId)?.player_name ||
-                 getSpellCards().find(c => c.id === selectedCardId)?.name ||
-                 getTrapCards().find(c => c.id === selectedCardId)?.name ||
-                 'Selected'}
-              </Text>
-            </View>
-          ) : (
-            <View className="w-24 h-32 bg-gray-700/50 rounded-xl border-2 border-dashed border-gray-600 items-center justify-center">
-              <Text className="text-gray-500 text-xs text-center">Select a card</Text>
-            </View>
-          )}
+              return (
+                <DraggableCard
+                  key={`${card.id}_${index}`}
+                  card={card}
+                  cardType={cardType}
+                  isMyTurn={isMyTurn}
+                  isAnimating={isAnimating}
+                  fanAngle={angle}
+                  fanYOffset={yOffset}
+                  onDragStart={() => {
+                    setDraggingCardId(card.id);
+                    setDraggingCardType(cardType);
+                  }}
+                  onDragOverField={(over: boolean) => setIsDraggingOverField(over)}
+                  onDrop={() => handleCardDrop(card, cardType)}
+                  onDragEnd={() => {
+                    setDraggingCardId(null);
+                    setDraggingCardType(null);
+                    setIsDraggingOverField(false);
+                  }}
+                />
+              );
+            })}
+            {hand.length === 0 && (
+              <Text style={{ color: '#554433', fontSize: 12 }}>No cards in hand</Text>
+            )}
+          </View>
         </View>
-      </View>
 
-      {/* YOUR HAND */}
-      <View className="bg-gray-800 pt-3 pb-4 border-t-2 border-gray-700">
-        <Text className="text-gray-400 text-xs font-bold px-4 mb-2">Your Hand</Text>
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}
-        >
-          {getPlayerCards().map((card: any, index: number) => (
-            <TouchableOpacity
-              key={`${card.id}_${index}`}
-              className={`w-28 h-40 rounded-xl p-2 ${
-                selectedCardId === card.id
-                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-                  : isMyTurn 
-                    ? 'bg-gradient-to-b from-blue-600 to-blue-800 border-2 border-blue-400' 
-                    : 'bg-gray-700 opacity-60'
-              }`}
-              onPress={() => handleCardSelect(card.id, 'PLAYER')}
-              disabled={!isMyTurn || isAnimating}
-            >
-              <Text className="text-white font-bold text-xs" numberOfLines={2}>
-                {card.player_name}
+        {/* ===== ACTION SELECTION OVERLAY ===== */}
+        {showActionOverlay && pendingDropCard && (
+          <View style={styles.actionOverlay}>
+            <View style={styles.actionOverlayInner}>
+              <Text style={styles.actionOverlayTitle}>
+                {pendingDropCard.player_name || pendingDropCard.name}
               </Text>
-              <View className="flex-1 justify-center mt-1">
-                <Text className="text-gray-200 text-xs">OFF {card.offense}</Text>
-                <Text className="text-gray-200 text-xs">DEF {card.defense}</Text>
+              <Text style={styles.actionOverlaySubtitle}>Choose an action</Text>
+              <View style={styles.actionButtonsRow}>
+                <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#4a2080' }]} onPress={() => handleActionSubmit('FAST_BREAK')}>
+                  <Text style={styles.actionBtnText}>Fast Break</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#804020' }]} onPress={() => handleActionSubmit('POST_UP')}>
+                  <Text style={styles.actionBtnText}>Post Up</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#206030' }]} onPress={() => handleActionSubmit('THREE_POINT')}>
+                  <Text style={styles.actionBtnText}>3-PT</Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          ))}
-
-          {getSpellCards().map((card: any, index: number) => (
-            <TouchableOpacity
-              key={`spell_${card.id}_${index}`}
-              className={`w-28 h-40 rounded-xl p-2 ${
-                selectedCardId === card.id
-                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-                  : isMyTurn 
-                    ? 'bg-gradient-to-b from-purple-600 to-purple-800 border-2 border-purple-400' 
-                    : 'bg-gray-700 opacity-60'
-              }`}
-              onPress={() => handleCardSelect(card.id, 'SPELL')}
-              disabled={!isMyTurn || isAnimating}
-            >
-              <Text className="text-white font-bold text-xs" numberOfLines={2}>
-                {card.name}
-              </Text>
-              <Text className="text-purple-200 text-xs mt-1" numberOfLines={4}>
-                {card.description}
-              </Text>
-            </TouchableOpacity>
-          ))}
-
-          {getTrapCards().map((card: any, index: number) => (
-            <TouchableOpacity
-              key={`trap_${card.id}_${index}`}
-              className={`w-28 h-40 rounded-xl p-2 ${
-                selectedCardId === card.id
-                  ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-                  : isMyTurn 
-                    ? 'bg-gradient-to-b from-red-600 to-red-800 border-2 border-red-400' 
-                    : 'bg-gray-700 opacity-60'
-              }`}
-              onPress={() => handleCardSelect(card.id, 'TRAP')}
-              disabled={!isMyTurn || isAnimating}
-            >
-              <Text className="text-white font-bold text-xs" numberOfLines={2}>
-                {card.name}
-              </Text>
-              <Text className="text-red-200 text-xs mt-1" numberOfLines={4}>
-                {card.description}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* ACTION BUTTONS */}
-      {isMyTurn && selectedCardId && (
-        <View className="bg-gray-900 px-4 py-3 border-t-2 border-gray-800">
-          {selectedCardType === 'PLAYER' && (
-            <View className="flex-row gap-2">
-              <TouchableOpacity 
-                className="flex-1 bg-purple-600 py-3 rounded-xl"
-                onPress={() => handleActionSubmit('FAST_BREAK')}
-              >
-                <Text className="text-white font-bold text-center text-sm">⚡ Fast Break</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                className="flex-1 bg-orange-600 py-3 rounded-xl"
-                onPress={() => handleActionSubmit('POST_UP')}
-              >
-                <Text className="text-white font-bold text-center text-sm">💪 Post Up</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                className="flex-1 bg-green-600 py-3 rounded-xl"
-                onPress={() => handleActionSubmit('THREE_POINT')}
-              >
-                <Text className="text-white font-bold text-center text-sm">🎯 3-PT</Text>
+              <TouchableOpacity style={{ marginTop: 10 }} onPress={() => { setShowActionOverlay(false); setPendingDropCard(null); setPendingDropCardType(null); }}>
+                <Text style={{ color: '#886644', fontSize: 13 }}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          )}
-
-          {selectedCardType === 'SPELL' && (
-            <TouchableOpacity 
-              className="bg-purple-600 py-4 rounded-xl"
-              onPress={() => handleActionSubmit('CAST_SPELL')}
-            >
-              <Text className="text-white font-bold text-center text-lg">✨ Cast Spell</Text>
-            </TouchableOpacity>
-          )}
-
-          {selectedCardType === 'TRAP' && (
-            <TouchableOpacity 
-              className="bg-red-600 py-4 rounded-xl"
-              onPress={() => handleActionSubmit('SET_TRAP')}
-            >
-              <Text className="text-white font-bold text-center text-lg">🔒 Set Trap</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-    </View>
+          </View>
+        )}
+      </ImageBackground>
+    </GestureHandlerRootView>
   );
 };
 
-// // src/screens/ArenaScreen.tsx
-// import React, { useState, useRef, useEffect } from 'react';
-// import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Animated } from 'react-native';
-// import LottieView from 'lottie-react-native';
-// import { useMutation } from 'convex/react';
-// import { api as convexApi } from '../../convex/_generated/api';
-// // import { useBattle } from '../hooks/useBattle';
-// import { useConvexBattle } from '../hooks/useConvexBattle';
-// type AnimationType = 'slash' | 'fireball' | 'lightning' | 'rocket' | 'bomb' | 'threearrowdown' | 'exclamation' | 'thumbsup' | null;
-// import api from '../lib/api'; 
-// import { useAuth } from '@/hooks/useAuth';
+// Draggable card component
+interface DraggableCardProps {
+  card: any;
+  cardType: CardType;
+  isMyTurn: boolean;
+  isAnimating: boolean;
+  fanAngle?: number;
+  fanYOffset?: number;
+  onDragStart: () => void;
+  onDragOverField: (over: boolean) => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}
 
-// type CardType = 'PLAYER' | 'SPELL' | 'TRAP';
+const RARITY_BORDER_COLORS: Record<string, string> = {
+  COMMON: '#9ca3af',
+  RARE: '#3b82f6',
+  EPIC: '#a855f7',
+  LEGENDARY: '#f59e0b',
+  MYTHIC: '#ef4444',
+};
 
-// export const ArenaScreen = ({ route, navigation }: any) => {
-//   const { battleId } = route.params;
-//   const { battleState, connected, error, submitAction, castSpell, setTrap, isMyTurn } = useConvexBattle(battleId);
-//   const { user } = useAuth();
-//   const markResultSyncedMutation = useMutation(convexApi.battles.markResultSynced);
+const RARITY_BG_COLORS: Record<string, string> = {
+  COMMON: '#374151',
+  RARE: '#1e3a5f',
+  EPIC: '#3b1860',
+  LEGENDARY: '#5c3d0e',
+  MYTHIC: '#5c1a1a',
+};
 
-//   // Animation state
-//   const [isAnimating, setIsAnimating] = useState(false);
-//   const [currentAnimation, setCurrentAnimation] = useState<AnimationType>(null);
-//   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-//   const [selectedCardType, setSelectedCardType] = useState<CardType | null>(null);
+function DraggableCard({ card, cardType, isMyTurn, isAnimating, fanAngle = 0, fanYOffset = 0, onDragStart, onDragOverField, onDrop, onDragEnd }: DraggableCardProps) {
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const scale = useSharedValue(1);
+  const isOverField = useSharedValue(false);
 
-//   const [activePlayerCard, setActivePlayerCard] = useState<any>(null);
-// const [activeOpponentCard, setActiveOpponentCard] = useState<any>(null);
-// const [turnTimeLeft, setTurnTimeLeft] = useState(30);
+  const rarity = card.rarity || 'COMMON';
+  const borderColor = RARITY_BORDER_COLORS[rarity] || RARITY_BORDER_COLORS.COMMON;
+  const bgColor = RARITY_BG_COLORS[rarity] || RARITY_BG_COLORS.COMMON;
 
-//   const [activeTab, setActiveTab] = useState<'PLAYERS' | 'SPELLS' | 'TRAPS'>('PLAYERS');
+  const gesture = Gesture.Pan()
+    .enabled(isMyTurn && !isAnimating)
+    .onStart(() => {
+      scale.value = withSpring(1.1);
+      runOnJS(onDragStart)();
+    })
+    .onUpdate((event) => {
+      translateX.value = event.translationX;
+      translateY.value = event.translationY;
+      const over = event.translationY < FIELD_DROP_THRESHOLD_Y;
+      if (over !== isOverField.value) {
+        isOverField.value = over;
+        runOnJS(onDragOverField)(over);
+      }
+    })
+    .onEnd((event) => {
+      const droppedOnField = event.translationY < FIELD_DROP_THRESHOLD_Y;
+      if (droppedOnField) {
+        runOnJS(onDrop)();
+      } else {
+        runOnJS(onDragEnd)();
+      }
+      translateX.value = withSpring(0);
+      translateY.value = withSpring(0);
+      scale.value = withSpring(1);
+    });
 
-//   // Animation refs
-//   const attackerScale = useRef(new Animated.Value(1)).current;
-//   const defenderShake = useRef(new Animated.Value(0)).current;
-//   const impactOpacity = useRef(new Animated.Value(0)).current;
-//   const scoreFlash = useRef(new Animated.Value(1)).current;
-//   const hasFinished = useRef(false);
-//   // Watch for battle state changes to trigger animations
-//   useEffect(() => {
-//     if (battleState?.recent_moves && battleState.recent_moves.length > 0) {
-//       const lastMove = battleState.recent_moves[battleState.recent_moves.length - 1];
-      
-//       // Only animate if it's a new move
-//       if (lastMove && !isAnimating) {
-//         triggerMoveAnimation(lastMove);
-//       }
-//     }
-//   }, [battleState?.recent_moves]);
+  const animatedStyle = useAnimatedStyle(() => {
+    const isDragging = scale.value > 1.05;
+    return {
+      transform: [
+        { translateX: translateX.value },
+        { translateY: isDragging ? translateY.value : translateY.value + fanYOffset },
+        { rotate: isDragging ? '0deg' : `${fanAngle}deg` },
+        { scale: scale.value },
+      ],
+      zIndex: isDragging ? 100 : 1,
+    };
+  });
 
-//   useEffect(() => {
-//     if (!isMyTurn || !battleState) return;
-    
-//     setTurnTimeLeft(30);
-//     const timer = setInterval(() => {
-//       setTurnTimeLeft(prev => {
-//         if (prev <= 1) {
-//           clearInterval(timer);
-//           // Auto-submit random action when time runs out
-//           const playerCards = getPlayerCards();
-//           if (playerCards.length > 0) {
-//             const randomCard = playerCards[Math.floor(Math.random() * playerCards.length)];
-//             submitAction('FAST_BREAK', randomCard.id, 'PG');
-//           }
-//           return 0;
-//         }
-//         return prev - 1;
-//       });
-//     }, 1000);
-  
-//     return () => clearInterval(timer);
-//   }, [isMyTurn, battleState?.turn]);
+  const cardName = card.player_name || card.name || 'Card';
+  const costValue = card.speed || card.effect_value || 3;
+  const isSpellOrTrap = cardType === 'SPELL' || cardType === 'TRAP';
 
-//   useEffect(() => {
-//     if (battleState?.recent_moves && battleState.recent_moves.length > 0) {
-//       const lastMove = battleState.recent_moves[battleState.recent_moves.length - 1];
-      
-//       // Find the card that made the move
-//       const playerCard = battleState.player1.deck?.find((c: any) => c.id === lastMove.card_id);
-//       const opponentCard = battleState.player2.deck?.[Math.floor(Math.random() * battleState.player2.deck.length)];
-      
-//       setActivePlayerCard(playerCard);
-//       setActiveOpponentCard(opponentCard);
-      
-//       // Clear after 3 seconds
-//       setTimeout(() => {
-//         setActivePlayerCard(null);
-//         setActiveOpponentCard(null);
-//       }, 3000);
-//     }
-//   }, [battleState?.recent_moves]);
+  return (
+    <GestureDetector gesture={gesture}>
+      <ReanimatedAnimated.View
+        style={[
+          hsStyles.card,
+          {
+            borderColor: isMyTurn ? borderColor : '#444',
+            backgroundColor: bgColor,
+            opacity: isMyTurn ? 1 : 0.5,
+          },
+          animatedStyle,
+        ]}
+      >
+        {/* Cost Crystal - top left */}
+        <View style={[hsStyles.costCrystal, { backgroundColor: '#2563eb', borderColor: '#93c5fd' }]}>
+          <Text style={hsStyles.costText}>{costValue}</Text>
+        </View>
 
-// useEffect(() => {
-//   if (!battleState || !user) return;
+        {/* Card Image Area */}
+        <View style={hsStyles.imageFrame}>
+          {card.image_url ? (
+            <Image
+              source={{ uri: card.image_url }}
+              style={hsStyles.cardImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[hsStyles.cardImagePlaceholder, {
+              backgroundColor: cardType === 'PLAYER' ? '#1a3050' : cardType === 'SPELL' ? '#301050' : '#501020',
+            }]}>
+              <Text style={{ color: '#666', fontSize: 20 }}>
+                {cardType === 'PLAYER' ? '?' : cardType === 'SPELL' ? '?' : '?'}
+              </Text>
+            </View>
+          )}
+        </View>
 
-//   // Check if battle just finished
-//   if (battleState.status === "FINISHED" && !hasFinished.current) {
-//     hasFinished.current = true; // Prevent multiple syncs
-//     syncBattleResult();
-//   }
-// }, [battleState?.status]);
+        {/* Name Banner */}
+        <View style={[hsStyles.nameBanner, { backgroundColor: '#1a0e0aee' }]}>
+          <Text style={hsStyles.nameText} numberOfLines={1}>{cardName}</Text>
+        </View>
 
-// const syncBattleResult = async () => {
-//   if (!battleState || !user) return;
+        {/* Description / Info area */}
+        <View style={hsStyles.descArea}>
+          {isSpellOrTrap ? (
+            <Text style={hsStyles.descText} numberOfLines={2}>
+              {card.description || (cardType === 'TRAP' ? 'Trap card' : 'Spell card')}
+            </Text>
+          ) : (
+            <Text style={hsStyles.descText} numberOfLines={1}>
+              {card.position || ''} {card.team ? `- ${card.team}` : ''}
+            </Text>
+          )}
+        </View>
 
-//   try {
-//     const winnerId = battleState.player1_score > battleState.player2_score
-//       ? battleState.player1.user_id
-//       : battleState.player2.user_id;
+        {/* Bottom stat badges - Offense left, Defense right */}
+        {cardType === 'PLAYER' ? (
+          <>
+            <View style={[hsStyles.statBadge, hsStyles.statLeft, { backgroundColor: '#b8860b', borderColor: '#d4a44c' }]}>
+              <Text style={hsStyles.statValue}>{card.offense || 0}</Text>
+            </View>
+            <View style={[hsStyles.statBadge, hsStyles.statRight, { backgroundColor: '#7c3aed', borderColor: '#a78bfa' }]}>
+              <Text style={hsStyles.statValue}>{card.defense || 0}</Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={[hsStyles.typeBadgeBottom, {
+              backgroundColor: cardType === 'SPELL' ? '#6622aa' : '#aa2222',
+            }]}>
+              <Text style={hsStyles.typeBadgeText}>{cardType}</Text>
+            </View>
+          </>
+        )}
+      </ReanimatedAnimated.View>
+    </GestureDetector>
+  );
+}
 
-//     const loserId = winnerId === battleState.player1.user_id
-//       ? battleState.player2.user_id
-//       : battleState.player1.user_id;
+const hsStyles = StyleSheet.create({
+  card: {
+    width: 72,
+    height: 100,
+    borderRadius: 7,
+    borderWidth: 2,
+    overflow: 'visible',
+    position: 'relative',
+    marginHorizontal: -6, // overlap cards in fan
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.7,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  costCrystal: {
+    position: 'absolute',
+    top: -5,
+    left: -5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    shadowColor: '#3b82f6',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 4,
+  },
+  costText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  imageFrame: {
+    height: 46,
+    marginTop: 2,
+    marginHorizontal: 3,
+    borderRadius: 3,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#00000066',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cardImagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nameBanner: {
+    marginHorizontal: 2,
+    marginTop: 1,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    borderRadius: 2,
+    alignItems: 'center',
+    backgroundColor: '#0d0806cc',
+  },
+  nameText: {
+    color: '#e8d5b0',
+    fontSize: 7,
+    fontWeight: '900',
+    textAlign: 'center',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  descArea: {
+    flex: 1,
+    paddingHorizontal: 3,
+    paddingTop: 1,
+    justifyContent: 'center',
+  },
+  descText: {
+    color: '#a89070',
+    fontSize: 6,
+    textAlign: 'center',
+    lineHeight: 8,
+  },
+  statBadge: {
+    position: 'absolute',
+    bottom: -5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.7,
+    shadowRadius: 3,
+  },
+  statLeft: {
+    left: -5,
+  },
+  statRight: {
+    right: -5,
+  },
+  statValue: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '900',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  typeBadgeBottom: {
+    position: 'absolute',
+    bottom: 2,
+    alignSelf: 'center',
+    left: '15%' as any,
+    right: '15%' as any,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  typeBadgeText: {
+    color: '#e8d5b0',
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+});
 
-//     // Call Go backend to update Supabase
-//     await api.post('/battles/finish', {
-//       battle_id: battleState.battle_id,
-//       winner_id: winnerId,
-//       loser_id: loserId,
-//       player1_score: battleState.player1_score,
-//       player2_score: battleState.player2_score,
-//     });
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    fontSize: 18,
+    marginTop: 16,
+  },
 
-//     // Mark as synced in Convex
-//     await markResultSyncedMutation({ battleId: battleState.battle_id });
+  // ============ HUD BAR ============
+  hudBar: {
+    backgroundColor: 'rgba(10,6,4,0.85)',
+    borderBottomWidth: 2,
+    borderBottomColor: '#b8860b55',
+  },
+  hudInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  hudSide: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hudRight: {
+    justifyContent: 'flex-end',
+  },
+  heroPortrait: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#886644',
+    backgroundColor: '#2a1a10',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroPortraitText: {
+    color: '#e8d5b0',
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  hudScore: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#e8d5b0',
+  },
+  hudCenter: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  quarterBadge: {
+    backgroundColor: '#b8860b',
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#d4a44c',
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+  },
+  quarterText: {
+    color: '#1a0e0a',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+  turnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 3,
+    letterSpacing: 1.5,
+  },
 
-//     // Show results screen after 2 seconds
-//     setTimeout(() => {
-//       navigation.replace('BattleResults', {
-//         winnerId,
-//         isWinner: winnerId === user.id,
-//         player1Score: battleState.player1_score,
-//         player2Score: battleState.player2_score,
-//         gemsEarned: winnerId === user.id ? 2 : 0,
-//       });
-//     }, 2000);
+  // ============ BATTLEFIELD ============
+  battlefieldOuter: {
+    flex: 1,
+    flexDirection: 'row',
+  },
 
-//   } catch (error) {
-//     console.error('Failed to sync battle result:', error);
-//     // Still show results screen even if sync fails
-//     setTimeout(() => {
-//       navigation.goBack();
-//     }, 2000);
-//   }
-// };
+  // Center battlefield surface — transparent to show BG image
+  battleSurface: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    position: 'relative',
+    overflow: 'hidden',
+  },
 
+  fieldHalf: {
+    flex: 1,
+    justifyContent: 'center',
+    position: 'relative',
+    zIndex: 1,
+  },
+  fieldInner: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  fieldCardsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 60,
+  },
+  fieldCard: {
+    width: 64,
+    height: 82,
+    borderRadius: 7,
+    borderWidth: 2,
+    overflow: 'visible',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.7,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  fieldCardImage: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    borderRadius: 5,
+  },
+  fieldCardOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingVertical: 3,
+    paddingHorizontal: 2,
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5,
+  },
+  fieldCardName: {
+    color: '#e8d5b0',
+    fontSize: 8,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  fieldStatLeft: {
+    position: 'absolute',
+    bottom: -5,
+    left: -5,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#b8860b',
+    borderWidth: 1.5,
+    borderColor: '#d4a44c',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  fieldStatRight: {
+    position: 'absolute',
+    bottom: -5,
+    right: -5,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#7c3aed',
+    borderWidth: 1.5,
+    borderColor: '#a78bfa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  fieldStatText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  fieldEmptyText: {
+    color: 'rgba(180,150,110,0.5)',
+    fontSize: 13,
+    fontStyle: 'italic',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  dropGlowBorder: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    right: 2,
+    bottom: 2,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#d4a44c88',
+    zIndex: 0,
+  },
 
-//   const triggerMoveAnimation = (move: any) => {
-//     setIsAnimating(true);
-    
-//     // Step 1: Scale up attacker card
-//     Animated.sequence([
-//       Animated.timing(attackerScale, {
-//         toValue: 1.15,
-//         duration: 200,
-//         useNativeDriver: true,
-//       }),
-//       Animated.timing(attackerScale, {
-//         toValue: 1,
-//         duration: 200,
-//         useNativeDriver: true,
-//       }),
-//     ]).start();
+  // Ornamental divider
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 12,
+    zIndex: 2,
+    paddingHorizontal: 12,
+  },
+  dividerWing: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#b8860b',
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 3,
+  },
+  dividerCenter: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 6,
+  },
+  dividerGem: {
+    width: 10,
+    height: 10,
+    backgroundColor: '#d4a44c',
+    borderRadius: 2,
+    transform: [{ rotate: '45deg' }],
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+  },
 
-//     // Step 2: Show impact animation
-//     setTimeout(() => {
-//       const animation = getAnimationForAction(move.action, move.success, move.points_scored);
-//       setCurrentAnimation(animation);
-      
-//       Animated.timing(impactOpacity, {
-//         toValue: 1,
-//         duration: 150,
-//         useNativeDriver: true,
-//       }).start(() => {
-//         // Hide animation after duration
-//         setTimeout(() => {
-//           Animated.timing(impactOpacity, {
-//             toValue: 0,
-//             duration: 250,
-//             useNativeDriver: true,
-//           }).start(() => {
-//             setCurrentAnimation(null);
-//           });
-//         }, 600);
-//       });
-//     }, 300);
+  // Feedback & log
+  actionFeedbackOverlay: {
+    position: 'absolute',
+    top: '38%' as any,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(26,14,10,0.92)',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#b8860b',
+    zIndex: 40,
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+  },
+  actionFeedbackText: {
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+    color: '#f5c542',
+  },
+  battleLog: {
+    position: 'absolute',
+    bottom: 6,
+    left: 12,
+    right: 12,
+    backgroundColor: 'rgba(13,8,6,0.8)',
+    borderRadius: 6,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: '#3d221544',
+  },
+  lottieOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+  },
 
-//     // Step 3: Shake defender if successful hit
-//     if (move.success) {
-//       setTimeout(() => {
-//         Animated.sequence([
-//           Animated.timing(defenderShake, { toValue: 10, duration: 50, useNativeDriver: true }),
-//           Animated.timing(defenderShake, { toValue: -10, duration: 50, useNativeDriver: true }),
-//           Animated.timing(defenderShake, { toValue: 10, duration: 50, useNativeDriver: true }),
-//           Animated.timing(defenderShake, { toValue: 0, duration: 50, useNativeDriver: true }),
-//         ]).start();
-//       }, 400);
-//     }
+  // Right edge (end turn)
+  boardEdgeRight: {
+    width: 70,
+    backgroundColor: 'rgba(10,6,4,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+  },
+  endTurnButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  endTurnLabel: {
+    fontWeight: '900',
+    fontSize: 10,
+    textAlign: 'center',
+    letterSpacing: 1,
+  },
+  timerBubble: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timerText: {
+    fontWeight: '900',
+    fontSize: 14,
+  },
 
-//     // Step 4: Flash score if points scored
-//     if (move.points_scored > 0) {
-//       setTimeout(() => {
-//         Animated.sequence([
-//           Animated.timing(scoreFlash, {
-//             toValue: 1.3,
-//             duration: 150,
-//             useNativeDriver: true,
-//           }),
-//           Animated.timing(scoreFlash, {
-//             toValue: 1,
-//             duration: 150,
-//             useNativeDriver: true,
-//           }),
-//         ]).start();
-//       }, 600);
-//     }
+  // ============ HAND TRAY ============
+  handTray: {
+    height: 110,
+    backgroundColor: 'rgba(8,5,3,0.88)',
+    borderTopWidth: 2,
+    borderTopColor: '#b8860b66',
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    overflow: 'visible',
+  },
+  drawPile: {
+    width: 52,
+    height: 72,
+    borderRadius: 6,
+    borderWidth: 2,
+    backgroundColor: '#1a0e0a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+    marginBottom: 10,
+    position: 'relative',
+  },
+  drawPileIcon: {
+    color: '#886644',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  drawPileCount: {
+    color: '#e8d5b0',
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  drawPileGlow: {
+    position: 'absolute',
+    top: -2,
+    left: -2,
+    right: -2,
+    bottom: -2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f5c54255',
+  },
+  handCardsArea: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+    paddingBottom: 4,
+    overflow: 'visible',
+  },
 
-//     // Reset animation state
-//     setTimeout(() => {
-//       setIsAnimating(false);
-//     }, 1200);
-//   };
-
-//   const getAnimationForAction = (action: string, success: boolean, pointsScored: number): AnimationType => {
-//     // Big score (bomb)
-//     if (pointsScored >= 3) {
-//       return 'bomb';
-//     }
-  
-//     // Miss/Fail
-//     if (!success) {
-//       return 'exclamation';
-//     }
-  
-//     if (action === 'SPELL_CAST') {
-//       return 'fireball';
-//     }
-    
-//     if (action === 'TRAP_SET') {
-//       return 'exclamation';
-//     }
-
-//     if (action === 'TRAP_TRIGGERED') {
-//       return 'threearrowdown';
-//     }
-  
-//     // Existing player actions
-//     const actionMap: Record<string, AnimationType> = {
-//       'FAST_BREAK': 'slash',
-//       'POST_UP': 'fireball',
-//       'THREE_POINT': 'rocket',
-//       'ISOLATION': 'lightning',
-//       'PICK_AND_ROLL': 'slash',
-//       'BLOCK': 'exclamation',
-//     };
-  
-//     return actionMap[action] || 'slash';
-//   };
-  
-//   // Spell animation mapper
-//   const getSpellAnimation = (spellAction: string): AnimationType => {
-//     const spellMap: Record<string, AnimationType> = {
-//       'SPELL_FAST_BREAK_BOOST': 'lightning',
-//       'SPELL_OFFENSIVE_SURGE': 'fireball',
-//       'SPELL_DEFENSIVE_WALL': 'exclamation',
-//       'SPELL_TEAM_HUSTLE': 'slash',
-//       'SPELL_MOMENTUM_SHIFT': 'fireball',
-//       'SPELL_HOT_HAND': 'fireball',
-//       'SPELL_ALLEY_OOP': 'rocket',
-//       'SPELL_FULL_COURT_PRESS': 'exclamation',
-//       'SPELL_BUZZER_BEATER': 'rocket',
-//       'SPELL_CHAMPIONSHIP_MENTALITY': 'bomb',
-//       'SPELL_PLAYOFF_MODE': 'bomb',
-//       'SPELL_LEGENDARY_PERFORMANCE': 'bomb',
-//     };
-    
-//     return spellMap[spellAction] || 'thumbsup';
-//   };
-  
-//   // Trap animation mapper
-//   const getTrapAnimation = (trapAction: string): AnimationType => {
-//     const trapMap: Record<string, AnimationType> = {
-//       'TRAP_SHOT_BLOCK': 'exclamation',
-//       'TRAP_STEAL_ATTEMPT': 'slash',
-//       'TRAP_ZONE_DEFENSE': 'exclamation',
-//       'TRAP_CHARGE_TAKEN': 'bomb',
-//       'TRAP_TIT_FOR_TAT': 'rocket',  // Your renamed card
-//       'TRAP_RATTLED': 'threearrowdown',  // Your renamed card
-//       'TRAP_LOCKDOWN_DEFENSE': 'exclamation',
-//       'TRAP_PERFECT_DEFENSE': 'bomb',
-//     };
-    
-//     return trapMap[trapAction] || 'exclamation';
-//   };
-  
-
-//   const getAnimationSource = (animation: AnimationType) => {
-//     if (!animation) return null;
-
-//     const sources: Record<string, any> = {
-//       'slash': require('../../assets/animations/slash.json'),
-//       'fireball': require('../../assets/animations/fireball.json'),
-//       'lightning': require('../../assets/animations/lightning.json'),
-//       'rocket': require('../../assets/animations/rocket.json'),
-//       'bomb': require('../../assets/animations/bomb.json'),
-//       'threearrowdown': require('../../assets/animations/threearrowdown.json'),
-//       'exclamation': require('../../assets/animations/exclamation.json'),
-//       'thumbsup': require('../../assets/animations/thumbsup.json'),
-//     };
-
-//     return sources[animation];
-//   };
-
-//   const handleCardSelect = (cardId: string, cardType: CardType) => {
-//     if (!isMyTurn || isAnimating) return;
-//     setSelectedCardId(cardId);
-//     setSelectedCardType(cardType);
-//   };
-
-//   const handleActionSubmit = (action: string) => {
-//     if (!isMyTurn || !selectedCardId || isAnimating) {
-//       alert('Please select a card first!');
-//       return;
-//     }
-    
-//     if (selectedCardType === 'PLAYER') {
-//       submitAction(action, selectedCardId, 'PG');
-//     } else if (selectedCardType === 'SPELL') {
-//       castSpell(selectedCardId);
-//     } else if (selectedCardType === 'TRAP') {
-//       setTrap(selectedCardId);
-//     }
-    
-//     setSelectedCardId(null);
-//     setSelectedCardType(null);
-//   };
-
-//   // Filter cards by type
-//   const getPlayerCards = () => {
-//     return battleState?.player1?.deck?.filter((card: any) => card.type === 'PLAYER') || [];
-//   };
-  
-//   const getSpellCards = () => {
-//     return battleState?.player1?.deck?.filter((card: any) => card.type === 'SPELL') || [];
-//   };
-  
-//   const getTrapCards = () => {
-//     return battleState?.player1?.deck?.filter((card: any) => card.type === 'TRAP') || [];
-//   };
-
-//   // Loading state
-//   if (!connected) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center">
-//         <ActivityIndicator size="large" color="#10b981" />
-//         <Text className="text-white text-xl mt-4">Connecting to battle...</Text>
-//         <Text className="text-gray-400 text-sm mt-2">Battle ID: {battleId}</Text>
-//       </View>
-//     );
-//   }
-
-//   // Error state
-//   if (error) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center px-6">
-//         <Text className="text-6xl mb-4">⚠️</Text>
-//         <Text className="text-red-500 text-xl font-bold text-center mb-2">Connection Error</Text>
-//         <Text className="text-gray-400 text-center mb-6">{error}</Text>
-//         <TouchableOpacity 
-//           onPress={() => navigation.goBack()}
-//           className="bg-green-600 px-8 py-4 rounded-xl active:bg-green-700"
-//         >
-//           <Text className="text-white font-bold text-lg">Return to Lobby</Text>
-//         </TouchableOpacity>
-//       </View>
-//     );
-//   }
-
-//   // Battle state not loaded yet
-//   if (!battleState) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center">
-//         <ActivityIndicator size="large" color="#10b981" />
-//         <Text className="text-white text-xl mt-4">Loading battle state...</Text>
-//       </View>
-//     );
-//   }
-
-//   return (
-//     <View className="flex-1 bg-gray-900">
-//       {/* HEADER - Scoreboard */}
-//       <View className="bg-gradient-to-r from-gray-800 to-gray-900 px-6 py-5 border-b-2 border-gray-700">
-//         <View className="flex-row justify-between items-center">
-//           {/* Player 1 Score (with flash animation) */}
-//           <Animated.View 
-//             style={{ transform: [{ scale: scoreFlash }] }}
-//             className="flex-1 items-start"
-//           >
-//             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">You</Text>
-//             <Text className="text-white text-4xl font-black">{battleState.player1_score}</Text>
-//           </Animated.View>
-  
-//           {/* Quarter Badge */}
-//           <View className="bg-yellow-500 px-6 py-3 rounded-full shadow-lg">
-//             <Text className="text-gray-900 text-2xl font-black">Q{battleState.quarter}</Text>
-//           </View>
-  
-//           {/* Player 2 Score (with shake animation) */}
-//           <Animated.View 
-//             style={{ transform: [{ translateX: defenderShake }] }}
-//             className="flex-1 items-end"
-//           >
-//             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Opponent</Text>
-//             <Text className="text-white text-4xl font-black">{battleState.player2_score}</Text>
-//           </Animated.View>
-//         </View>
-  
-//         {/* Turn Indicator */}
-//         <View className="mt-4 items-center">
-//           <View className={`px-6 py-2 rounded-full ${isMyTurn ? 'bg-green-600' : 'bg-gray-700'}`}>
-//             <Text className={`font-bold text-sm uppercase tracking-wider ${isMyTurn ? 'text-white' : 'text-gray-400'}`}>
-//               {isMyTurn ? '🎯 YOUR TURN' : "⏳ OPPONENT'S TURN"}
-//             </Text>
-//           </View>
-//         </View>
-//       </View>
-  
-//       {/* ACTIVE EFFECTS DISPLAY */}
-//       {battleState.active_effects && battleState.active_effects.length > 0 && (
-//         <View className="bg-purple-900/30 px-4 py-3 border-b border-purple-700">
-//           <Text className="text-purple-300 text-xs font-bold uppercase tracking-wider mb-2">
-//             ✨ Active Effects
-//           </Text>
-//           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-//             <View className="flex-row gap-2">
-//               {battleState.active_effects.map((effect: any, i: number) => (
-//                 <View 
-//                   key={i}
-//                   className="bg-purple-800/50 px-3 py-2 rounded-lg border border-purple-500"
-//                 >
-//                   <Text className="text-purple-200 text-xs font-bold">{effect.card_name}</Text>
-//                   <Text className="text-purple-400 text-xs">
-//                     {effect.duration === 'TURN' ? `${effect.turns_left} turn${effect.turns_left > 1 ? 's' : ''}` : effect.duration}
-//                   </Text>
-//                 </View>
-//               ))}
-//             </View>
-//           </ScrollView>
-//         </View>
-//       )}
-  
-//       {/* SET TRAPS DISPLAY */}
-//       {battleState.set_traps && battleState.set_traps.length > 0 && (
-//         <View className="bg-red-900/30 px-4 py-3 border-b border-red-700">
-//           <Text className="text-red-300 text-xs font-bold uppercase tracking-wider mb-2">
-//             🔒 Active Traps
-//           </Text>
-//           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-//             <View className="flex-row gap-2">
-//               {battleState.set_traps.map((trap: any, i: number) => (
-//                 <View 
-//                   key={i}
-//                   className="bg-red-800/50 px-3 py-2 rounded-lg border border-red-500"
-//                 >
-//                   <Text className="text-red-200 text-xs font-bold">🃏 Trap Set</Text>
-//                   <Text className="text-red-400 text-xs">Turn {trap.set_on_turn}</Text>
-//                 </View>
-//               ))}
-//             </View>
-//           </ScrollView>
-//         </View>
-//       )}
-  
-//       {/* OPPONENT DECK (Face Down Cards) */}
-//       <Animated.View 
-//         style={{ transform: [{ scale: attackerScale }] }}
-//         className="px-4 py-4 bg-gray-800/50"
-//       >
-//         <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3">
-//           Opponent's Deck
-//         </Text>
-//         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-//           <View className="flex-row gap-2">
-//             {battleState.player2.deck?.map((card: any, i: number) => (
-//               <View 
-//                 key={i} 
-//                 className="w-16 h-24 bg-gradient-to-b from-gray-700 to-gray-800 rounded-xl items-center justify-center border-2 border-gray-600 shadow-lg"
-//               >
-//                 <Text className="text-gray-500 text-4xl">🃏</Text>
-//               </View>
-//             ))}
-//           </View>
-//         </ScrollView>
-//       </Animated.View>
-  
-//       {/* IMPACT ANIMATION LAYER */}
-//       {currentAnimation && (
-//         <Animated.View
-//           style={{ opacity: impactOpacity }}
-//           className="absolute inset-0 items-center justify-center pointer-events-none z-50"
-//         >
-//           <LottieView
-//             source={getAnimationSource(currentAnimation)}
-//             autoPlay
-//             loop={false}
-//             style={{ width: 300, height: 300 }}
-//           />
-//         </Animated.View>
-//       )}
-  
-//       {/* BATTLE LOG */}
-//       <View className="flex-1 mx-4 my-3 bg-gray-800 rounded-xl p-4 border border-gray-700">
-//         <View className="flex-row items-center mb-3">
-//           <Text className="text-white font-bold text-lg">📜 Battle Log</Text>
-//           <View className="ml-2 bg-gray-700 px-2 py-1 rounded-full">
-//             <Text className="text-gray-400 text-xs font-semibold">
-//               {battleState.recent_moves?.length || 0} moves
-//             </Text>
-//           </View>
-//         </View>
-  
-//         <ScrollView showsVerticalScrollIndicator={false}>
-//           {battleState.recent_moves && battleState.recent_moves.length > 0 ? (
-//             battleState.recent_moves.map((move: any, i: number) => (
-//               <View 
-//                 key={i} 
-//                 className={`mb-2 p-3 rounded-lg border-l-4 ${
-//                   move.action === 'SPELL_CAST' ? 'bg-purple-900/30 border-purple-500' :
-//                   move.action === 'TRAP_SET' ? 'bg-red-900/30 border-red-500' :
-//                   move.action === 'TRAP_TRIGGERED' ? 'bg-orange-900/30 border-orange-500' :
-//                   move.success ? 'bg-green-900/30 border-green-500' : 'bg-red-900/30 border-red-500'
-//                 }`}
-//               >
-//                 <Text className="text-gray-200 text-sm font-medium">{move.description}</Text>
-//                 <View className="flex-row justify-between mt-2">
-//                   <Text className="text-gray-500 text-xs">
-//                     Turn {move.turn}
-//                   </Text>
-//                   <Text className={`text-xs font-bold ${move.points_scored > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-//                     {move.points_scored > 0 ? `+${move.points_scored} pts` : 'Miss'}
-//                   </Text>
-//                 </View>
-//               </View>
-//             ))
-//           ) : (
-//             <View className="flex-1 items-center justify-center py-8">
-//               <Text className="text-gray-500 text-sm">No moves yet. Game starting...</Text>
-//             </View>
-//           )}
-//         </ScrollView>
-//       </View>
-  
-//       {/* TAB SWITCHER + CARD DISPLAY */}
-//       <View className="bg-gray-800 pt-3 border-t-2 border-gray-700">
-//         {/* Tab Buttons */}
-//         <View className="flex-row px-4 gap-2 mb-3">
-//           <TouchableOpacity 
-//             className={`flex-1 py-2 rounded-lg ${activeTab === 'PLAYERS' ? 'bg-blue-600' : 'bg-gray-700'}`}
-//             onPress={() => setActiveTab('PLAYERS')}
-//           >
-//             <Text className={`text-center font-bold text-sm ${activeTab === 'PLAYERS' ? 'text-white' : 'text-gray-400'}`}>
-//               👥 Players ({getPlayerCards().length})
-//             </Text>
-//           </TouchableOpacity>
-  
-//           <TouchableOpacity 
-//             className={`flex-1 py-2 rounded-lg ${activeTab === 'SPELLS' ? 'bg-purple-600' : 'bg-gray-700'}`}
-//             onPress={() => setActiveTab('SPELLS')}
-//           >
-//             <Text className={`text-center font-bold text-sm ${activeTab === 'SPELLS' ? 'text-white' : 'text-gray-400'}`}>
-//               ✨ Spells ({getSpellCards().length})
-//             </Text>
-//           </TouchableOpacity>
-  
-//           <TouchableOpacity 
-//             className={`flex-1 py-2 rounded-lg ${activeTab === 'TRAPS' ? 'bg-red-600' : 'bg-gray-700'}`}
-//             onPress={() => setActiveTab('TRAPS')}
-//           >
-//             <Text className={`text-center font-bold text-sm ${activeTab === 'TRAPS' ? 'text-white' : 'text-gray-400'}`}>
-//               🔒 Traps ({getTrapCards().length})
-//             </Text>
-//           </TouchableOpacity>
-//         </View>
-  
-//         {/* Card Display Area */}
-//         <ScrollView 
-//           horizontal 
-//           showsHorizontalScrollIndicator={false}
-//           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 12 }}
-//         >
-//           {/* PLAYER CARDS */}
-//           {activeTab === 'PLAYERS' && getPlayerCards().map((card: any) => (
-//             <TouchableOpacity
-//               key={card.id}
-//               className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
-//                 selectedCardId === card.id
-//                   ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-//                   : isMyTurn 
-//                     ? 'bg-gradient-to-b from-blue-600 to-blue-800 border-2 border-blue-400' 
-//                     : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
-//               }`}
-//               onPress={() => handleCardSelect(card.id, 'PLAYER')}
-//               disabled={!isMyTurn || isAnimating}
-//               activeOpacity={0.8}
-//             >
-//               <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
-//                 {card.player_name}
-//               </Text>
-  
-//               <View className="flex-1 justify-center space-y-1">
-//                 <View className="flex-row justify-between items-center">
-//                   <Text className="text-gray-300 text-xs">OFF</Text>
-//                   <Text className="text-yellow-400 font-bold text-sm">{card.offense}</Text>
-//                 </View>
-//                 <View className="flex-row justify-between items-center">
-//                   <Text className="text-gray-300 text-xs">DEF</Text>
-//                   <Text className="text-blue-400 font-bold text-sm">{card.defense}</Text>
-//                 </View>
-//                 <View className="flex-row justify-between items-center">
-//                   <Text className="text-gray-300 text-xs">SPD</Text>
-//                   <Text className="text-green-400 font-bold text-sm">{card.speed}</Text>
-//                 </View>
-//                 <View className="flex-row justify-between items-center">
-//                   <Text className="text-gray-300 text-xs">3PT</Text>
-//                   <Text className="text-purple-400 font-bold text-sm">{card.three_point}</Text>
-//                 </View>
-//               </View>
-  
-//               <View className="mt-2 bg-gray-900/50 py-1 rounded-md">
-//                 <Text className="text-gray-300 text-xs text-center font-bold">
-//                   {card.position}
-//                 </Text>
-//               </View>
-//             </TouchableOpacity>
-//           ))}
-  
-//           {/* SPELL CARDS */}
-//           {activeTab === 'SPELLS' && getSpellCards().map((card: any, index: number) => (
-//             <TouchableOpacity
-//             key={`${card.id}_${index}`}
-//               className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
-//                 selectedCardId === card.id
-//                   ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-//                   : isMyTurn 
-//                     ? 'bg-gradient-to-b from-purple-600 to-purple-800 border-2 border-purple-400' 
-//                     : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
-//               }`}
-//               onPress={() => handleCardSelect(card.id, 'SPELL')}
-//               disabled={!isMyTurn || isAnimating}
-//               activeOpacity={0.8}
-//             >
-//               <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
-//                 {card.name}
-//               </Text>
-  
-//               <View className="flex-1 justify-center">
-//                 <Text className="text-purple-200 text-xs" numberOfLines={5}>
-//                   {card.description}
-//                 </Text>
-//               </View>
-  
-//               <View className="mt-2 bg-purple-900/50 py-1 rounded-md">
-//                 <Text className="text-purple-300 text-xs text-center font-bold">
-//                   {card.rarity}
-//                 </Text>
-//               </View>
-//             </TouchableOpacity>
-//           ))}
-  
-//           {/* TRAP CARDS */}
-//           {activeTab === 'TRAPS' && getTrapCards().map((card: any) => (
-//             <TouchableOpacity
-//               key={card.id}
-//               className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
-//                 selectedCardId === card.id
-//                   ? 'bg-gradient-to-b from-green-500 to-green-700 border-4 border-yellow-400'
-//                   : isMyTurn 
-//                     ? 'bg-gradient-to-b from-red-600 to-red-800 border-2 border-red-400' 
-//                     : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
-//               }`}
-//               onPress={() => handleCardSelect(card.id, 'TRAP')}
-//               disabled={!isMyTurn || isAnimating}
-//               activeOpacity={0.8}
-//             >
-//               <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
-//                 {card.name}
-//               </Text>
-  
-//               <View className="flex-1 justify-center">
-//                 <Text className="text-red-200 text-xs" numberOfLines={5}>
-//                   {card.description}
-//                 </Text>
-//               </View>
-  
-//               <View className="mt-2 bg-red-900/50 py-1 rounded-md">
-//                 <Text className="text-red-300 text-xs text-center font-bold">
-//                   {card.trigger}
-//                 </Text>
-//               </View>
-//             </TouchableOpacity>
-//           ))}
-//         </ScrollView>
-//       </View>
-  
-//       {/* CONDITIONAL ACTION BUTTONS */}
-//       {isMyTurn && (
-//         <View className="bg-gray-900 px-4 py-4 border-t-2 border-gray-800">
-//           <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3 text-center">
-//             {selectedCardId ? 'Choose Your Action' : 'Select a Card First'}
-//           </Text>
-  
-//           {/* PLAYER CARD ACTIONS */}
-//           {selectedCardType === 'PLAYER' && (
-//             <View className="flex-row justify-between gap-2">
-//               <TouchableOpacity 
-//                 className={`flex-1 py-4 rounded-xl shadow-lg ${
-//                   selectedCardId && !isAnimating ? 'bg-purple-600 active:bg-purple-700' : 'bg-gray-700'
-//                 }`}
-//                 onPress={() => handleActionSubmit('FAST_BREAK')}
-//                 disabled={!selectedCardId || isAnimating}
-//               >
-//                 <Text className={`font-bold text-center text-sm ${
-//                   selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-//                 }`}>
-//                   ⚡ Fast Break
-//                 </Text>
-//               </TouchableOpacity>
-              
-//               <TouchableOpacity 
-//                 className={`flex-1 py-4 rounded-xl shadow-lg ${
-//                   selectedCardId && !isAnimating ? 'bg-orange-600 active:bg-orange-700' : 'bg-gray-700'
-//                 }`}
-//                 onPress={() => handleActionSubmit('POST_UP')}
-//                 disabled={!selectedCardId || isAnimating}
-//               >
-//                 <Text className={`font-bold text-center text-sm ${
-//                   selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-//                 }`}>
-//                   💪 Post Up
-//                 </Text>
-//               </TouchableOpacity>
-              
-//               <TouchableOpacity 
-//                 className={`flex-1 py-4 rounded-xl shadow-lg ${
-//                   selectedCardId && !isAnimating ? 'bg-green-600 active:bg-green-700' : 'bg-gray-700'
-//                 }`}
-//                 onPress={() => handleActionSubmit('THREE_POINT')}
-//                 disabled={!selectedCardId || isAnimating}
-//               >
-//                 <Text className={`font-bold text-center text-sm ${
-//                   selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-//                 }`}>
-//                   🎯 3-Pointer
-//                 </Text>
-//               </TouchableOpacity>
-//             </View>
-//           )}
-  
-//           {/* SPELL CARD ACTION */}
-//           {selectedCardType === 'SPELL' && (
-//             <TouchableOpacity 
-//               className={`py-4 rounded-xl shadow-lg ${
-//                 selectedCardId && !isAnimating ? 'bg-purple-600 active:bg-purple-700' : 'bg-gray-700'
-//               }`}
-//               onPress={() => handleActionSubmit('CAST_SPELL')}
-//               disabled={!selectedCardId || isAnimating}
-//             >
-//               <Text className={`font-bold text-center text-lg ${
-//                 selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-//               }`}>
-//                 ✨ Cast Spell
-//               </Text>
-//             </TouchableOpacity>
-//           )}
-  
-//           {/* TRAP CARD ACTION */}
-//           {selectedCardType === 'TRAP' && (
-//             <TouchableOpacity 
-//               className={`py-4 rounded-xl shadow-lg ${
-//                 selectedCardId && !isAnimating ? 'bg-red-600 active:bg-red-700' : 'bg-gray-700'
-//               }`}
-//               onPress={() => handleActionSubmit('SET_TRAP')}
-//               disabled={!selectedCardId || isAnimating}
-//             >
-//               <Text className={`font-bold text-center text-lg ${
-//                 selectedCardId && !isAnimating ? 'text-white' : 'text-gray-500'
-//               }`}>
-//                 🔒 Set Trap
-//               </Text>
-//             </TouchableOpacity>
-//           )}
-//         </View>
-//       )}
-//     </View>
-//   );
-// };
-
-
-
-
-
-// import React from 'react';
-// import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
-// import { useBattle } from '../hooks/useBattle';
-
-// export const ArenaScreen = ({ route, navigation }: any) => {
-//   const { battleId } = route.params;
-//   const { battleState, connected, error, submitAction, isMyTurn } = useBattle(battleId);
-
-//   // Loading state
-//   if (!connected) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center">
-//         <ActivityIndicator size="large" color="#10b981" />
-//         <Text className="text-white text-xl mt-4">Connecting to battle...</Text>
-//         <Text className="text-gray-400 text-sm mt-2">Battle ID: {battleId}</Text>
-//       </View>
-//     );
-//   }
-
-//   // Error state
-//   if (error) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center px-6">
-//         <Text className="text-6xl mb-4">⚠️</Text>
-//         <Text className="text-red-500 text-xl font-bold text-center mb-2">Connection Error</Text>
-//         <Text className="text-gray-400 text-center mb-6">{error}</Text>
-//         <TouchableOpacity 
-//           onPress={() => navigation.goBack()}
-//           className="bg-green-600 px-8 py-4 rounded-xl active:bg-green-700"
-//         >
-//           <Text className="text-white font-bold text-lg">Return to Lobby</Text>
-//         </TouchableOpacity>
-//       </View>
-//     );
-//   }
-
-//   // Battle state not loaded yet
-//   if (!battleState) {
-//     return (
-//       <View className="flex-1 bg-gray-900 items-center justify-center">
-//         <ActivityIndicator size="large" color="#10b981" />
-//         <Text className="text-white text-xl mt-4">Loading battle state...</Text>
-//       </View>
-//     );
-//   }
-
-//   const handleCardPlay = (cardId: string, action: string) => {
-//     if (!isMyTurn) {
-//       alert('Not your turn!');
-//       return;
-//     }
-//     submitAction(action, cardId, 'PG');
-//   };
-
-//   return (
-//     <View className="flex-1 bg-gray-900">
-//       {/* HEADER - Scoreboard */}
-//       <View className="bg-gradient-to-r from-gray-800 to-gray-900 px-6 py-5 border-b-2 border-gray-700">
-//         <View className="flex-row justify-between items-center">
-//           {/* Player 1 Score */}
-//           <View className="flex-1 items-start">
-//             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">You</Text>
-//             <Text className="text-white text-4xl font-black">{battleState.player1_score}</Text>
-//           </View>
-
-//           {/* Quarter Badge */}
-//           <View className="bg-yellow-500 px-6 py-3 rounded-full shadow-lg">
-//             <Text className="text-gray-900 text-2xl font-black">Q{battleState.quarter}</Text>
-//           </View>
-
-//           {/* Player 2 Score */}
-//           <View className="flex-1 items-end">
-//             <Text className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Opponent</Text>
-//             <Text className="text-white text-4xl font-black">{battleState.player2_score}</Text>
-//           </View>
-//         </View>
-
-//         {/* Turn Indicator */}
-//         <View className="mt-4 items-center">
-//           <View className={`px-6 py-2 rounded-full ${isMyTurn ? 'bg-green-600' : 'bg-gray-700'}`}>
-//             <Text className={`font-bold text-sm uppercase tracking-wider ${isMyTurn ? 'text-white' : 'text-gray-400'}`}>
-//               {isMyTurn ? '🎯 YOUR TURN' : "⏳ OPPONENT'S TURN"}
-//             </Text>
-//           </View>
-//         </View>
-//       </View>
-
-//       {/* OPPONENT DECK (Face Down Cards) */}
-//       <View className="px-4 py-4 bg-gray-800/50">
-//         <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3">
-//           Opponent's Deck
-//         </Text>
-//         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-//           <View className="flex-row gap-2">
-//             {battleState.player2.deck.map((card, i) => (
-//               <View 
-//                 key={i} 
-//                 className="w-16 h-24 bg-gradient-to-b from-gray-700 to-gray-800 rounded-xl items-center justify-center border-2 border-gray-600 shadow-lg"
-//               >
-//                 <Text className="text-gray-500 text-4xl">🃏</Text>
-//               </View>
-//             ))}
-//           </View>
-//         </ScrollView>
-//       </View>
-
-//       {/* BATTLE LOG */}
-//       <View className="flex-1 mx-4 my-3 bg-gray-800 rounded-xl p-4 border border-gray-700">
-//         <View className="flex-row items-center mb-3">
-//           <Text className="text-white font-bold text-lg">📜 Battle Log</Text>
-//           <View className="ml-2 bg-gray-700 px-2 py-1 rounded-full">
-//             <Text className="text-gray-400 text-xs font-semibold">
-//               {battleState.recent_moves?.length || 0} moves
-//             </Text>
-//           </View>
-//         </View>
-
-//         <ScrollView showsVerticalScrollIndicator={false}>
-//           {battleState.recent_moves && battleState.recent_moves.length > 0 ? (
-//             battleState.recent_moves.map((move, i) => (
-//               <View 
-//                 key={i} 
-//                 className="mb-2 p-3 bg-gray-700 rounded-lg border-l-4 border-blue-500"
-//               >
-//                 <Text className="text-gray-200 text-sm font-medium">{move.description}</Text>
-//                 <View className="flex-row justify-between mt-2">
-//                   <Text className="text-gray-500 text-xs">
-//                     Turn {move.turn}
-//                   </Text>
-//                   <Text className={`text-xs font-bold ${move.points_scored > 0 ? 'text-green-400' : 'text-gray-500'}`}>
-//                     {move.points_scored > 0 ? `+${move.points_scored} pts` : 'No score'}
-//                   </Text>
-//                 </View>
-//               </View>
-//             ))
-//           ) : (
-//             <View className="flex-1 items-center justify-center py-8">
-//               <Text className="text-gray-500 text-sm">No moves yet. Game starting...</Text>
-//             </View>
-//           )}
-//         </ScrollView>
-//       </View>
-
-//       {/* YOUR HAND */}
-//       <View className="bg-gray-800 pt-4 pb-6 border-t-2 border-gray-700">
-//         <View className="px-4 mb-3">
-//           <Text className="text-white font-bold text-sm uppercase tracking-wider">
-//             Your Hand
-//           </Text>
-//         </View>
-
-//         <ScrollView 
-//           horizontal 
-//           showsHorizontalScrollIndicator={false}
-//           contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-//         >
-//           {battleState.player1.deck && battleState.player1.deck.length > 0 ? (
-//             battleState.player1.deck.map((card) => (
-//               <TouchableOpacity
-//                 key={card.id}
-//                 className={`w-32 h-44 rounded-xl p-3 shadow-xl ${
-//                   isMyTurn 
-//                     ? 'bg-gradient-to-b from-blue-600 to-blue-800 border-2 border-green-400' 
-//                     : 'bg-gradient-to-b from-gray-600 to-gray-800 border-2 border-gray-600 opacity-60'
-//                 }`}
-//                 onPress={() => handleCardPlay(card.id, 'THREE_POINT')}
-//                 disabled={!isMyTurn}
-//                 activeOpacity={0.8}
-//               >
-//                 {/* Card Name */}
-//                 <Text className="text-white font-bold text-xs mb-2" numberOfLines={2}>
-//                   {card.player_name}
-//                 </Text>
-
-//                 {/* Card Stats */}
-//                 <View className="flex-1 justify-center space-y-1">
-//                   <View className="flex-row justify-between items-center">
-//                     <Text className="text-gray-300 text-xs">OFF</Text>
-//                     <Text className="text-yellow-400 font-bold text-sm">{card.offense}</Text>
-//                   </View>
-//                   <View className="flex-row justify-between items-center">
-//                     <Text className="text-gray-300 text-xs">DEF</Text>
-//                     <Text className="text-blue-400 font-bold text-sm">{card.defense}</Text>
-//                   </View>
-//                   <View className="flex-row justify-between items-center">
-//                     <Text className="text-gray-300 text-xs">SPD</Text>
-//                     <Text className="text-green-400 font-bold text-sm">{card.speed}</Text>
-//                   </View>
-//                   <View className="flex-row justify-between items-center">
-//                     <Text className="text-gray-300 text-xs">3PT</Text>
-//                     <Text className="text-purple-400 font-bold text-sm">{card.three_point}</Text>
-//                   </View>
-//                 </View>
-
-//                 {/* Position Badge */}
-//                 <View className="mt-2 bg-gray-900/50 py-1 rounded-md">
-//                   <Text className="text-gray-300 text-xs text-center font-bold">
-//                     {card.position}
-//                   </Text>
-//                 </View>
-//               </TouchableOpacity>
-//             ))
-//           ) : (
-//             <Text className="text-gray-500 px-4">No cards in hand</Text>
-//           )}
-//         </ScrollView>
-//       </View>
-
-//       {/* ACTION BUTTONS (Only show when it's your turn) */}
-//       {isMyTurn && (
-//         <View className="bg-gray-900 px-4 py-4 border-t-2 border-gray-800">
-//           <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-3 text-center">
-//             Choose Your Action
-//           </Text>
-//           <View className="flex-row justify-between gap-2">
-//             <TouchableOpacity 
-//               className="flex-1 bg-purple-600 py-4 rounded-xl active:bg-purple-700 shadow-lg"
-//               onPress={() => alert('Select a card, then choose Fast Break')}
-//             >
-//               <Text className="text-white font-bold text-center text-sm">⚡ Fast Break</Text>
-//             </TouchableOpacity>
-            
-//             <TouchableOpacity 
-//               className="flex-1 bg-orange-600 py-4 rounded-xl active:bg-orange-700 shadow-lg"
-//               onPress={() => alert('Select a card, then choose Post Up')}
-//             >
-//               <Text className="text-white font-bold text-center text-sm">💪 Post Up</Text>
-//             </TouchableOpacity>
-            
-//             <TouchableOpacity 
-//               className="flex-1 bg-green-600 py-4 rounded-xl active:bg-green-700 shadow-lg"
-//               onPress={() => alert('Select a card, then choose 3-Pointer')}
-//             >
-//               <Text className="text-white font-bold text-center text-sm">🎯 3-Pointer</Text>
-//             </TouchableOpacity>
-//           </View>
-//         </View>
-//       )}
-//     </View>
-//   );
-// };
+  // ============ ACTION OVERLAY ============
+  actionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  actionOverlayInner: {
+    backgroundColor: '#2a1a10',
+    padding: 24,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#b8860b',
+    alignItems: 'center',
+    minWidth: 300,
+    shadowColor: '#f5c542',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  actionOverlayTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 4,
+    color: '#e8d5b0',
+  },
+  actionOverlaySubtitle: {
+    color: '#886644',
+    fontSize: 12,
+    marginBottom: 16,
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+  },
+  actionBtnText: {
+    color: '#e8d5b0',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+});

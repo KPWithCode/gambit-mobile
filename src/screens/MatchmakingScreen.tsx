@@ -47,7 +47,7 @@ export const MatchmakingScreen = ({ route, navigation }: any) => {
     ).start();
   }, []);
 
-  // MATCHMAKING useEffect - REMOVE THE DUPLICATE ON LINE 72-89!
+  // MATCHMAKING useEffect
   useEffect(() => {
     if (!user?.id || !deck) {
       console.log('⏳ Waiting for user or deck...', { userId: user?.id, hasDeck: !!deck });
@@ -57,8 +57,19 @@ export const MatchmakingScreen = ({ route, navigation }: any) => {
     console.log('🚀 Starting matchmaking for user:', user.id);
     joinMatchmaking();
 
+    // Fallback timer: if no match found after 32s, force AI battle
+    const aiTimeout = setTimeout(() => {
+      console.log('⏰ Timeout reached - triggering AI battle fallback');
+      if (user?.id) {
+        markExpiredMutation({ userId: user.id });
+      }
+      setStatus('expired');
+      createAIBattle();
+    }, 32000);
+
     // Cleanup on unmount
     return () => {
+      clearTimeout(aiTimeout);
       if (user?.id) {
         leaveQueueMutation({ userId: user.id });
       }

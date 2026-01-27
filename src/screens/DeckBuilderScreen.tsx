@@ -29,12 +29,13 @@ export const DeckBuilderScreen = () => {
       savedDeck.starters.forEach((card: any) => {
         const posIndex = POSITIONS.indexOf(card.lineup_position || card.CardDetails?.position);
         if (posIndex >= 0) {
-          // Map UserCard to Card type
+          // Map UserCard to Card type — preserve user_card_id (instance UUID)
           loadedStarters[posIndex] = {
             id: card.card_id,
+            user_card_id: card.id,
             player_name: card.CardDetails?.player_name || '',
             position: card.CardDetails?.position || 'PG',
-            ...card.CardDetails, // Spread all card details
+            ...card.CardDetails,
           } as CardType;
         }
       });
@@ -43,6 +44,7 @@ export const DeckBuilderScreen = () => {
       // Load bench
       const loadedBench = savedDeck.bench.map((card: any) => ({
         id: card.card_id,
+        user_card_id: card.id,
         player_name: card.CardDetails?.player_name || '',
         position: card.CardDetails?.position || 'PG',
         ...card.CardDetails,
