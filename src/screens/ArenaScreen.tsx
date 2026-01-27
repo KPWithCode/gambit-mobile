@@ -139,15 +139,16 @@ export const ArenaScreen = ({ route, navigation }: any) => {
   }, [battleState?.player1?.deck]);
 
   // Draw 1 card at the start of your turn
-  const prevTurn = useRef<number | null>(null);
+  const prevTurn = useRef<string | null>(null);
   useEffect(() => {
     if (!battleState?.current_turn || !isMyTurn) return;
     if (prevTurn.current === battleState.current_turn) return;
     prevTurn.current = battleState.current_turn;
 
     // Don't draw on the very first turn (already dealt)
-    if (battleState.current_turn <= 1) return;
-
+  const turnNumber = parseInt(battleState.current_turn, 10);  // Parse to number
+  if (turnNumber <= 1) return;
+  
     setDrawPile(prev => {
       if (prev.length === 0) return prev;
       const [drawn, ...rest] = prev;
@@ -189,7 +190,7 @@ export const ArenaScreen = ({ route, navigation }: any) => {
       triggerMoveAnimation(lastMove);
 
       // Track opponent played cards from moves
-      if (lastMove.player !== user?.id) {
+      if (lastMove.playerId !== user?.id) {
         const oppDeck = battleState?.player2?.deck || [];
         const card = oppDeck.find((c: any) => c.id === lastMove.cardId);
         if (card) {
@@ -454,7 +455,7 @@ export const ArenaScreen = ({ route, navigation }: any) => {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ImageBackground
-        source={require('../../assets/images/battlearena.png')}
+        source={require('../../assets/images/battlearena2.png')}
         style={styles.root}
         resizeMode="cover"
       >
@@ -535,20 +536,21 @@ export const ArenaScreen = ({ route, navigation }: any) => {
                       );
                     })
                   ) : (
-                    <Text style={styles.fieldEmptyText}>Opponent's field</Text>
+                    null
+                    // null <Text style={styles.fieldEmptyText}>Opponent's field</Text>
                   )}
                 </ScrollView>
               </View>
             </Animated.View>
 
             {/* ═══ ORNAMENTAL DIVIDER ═══ */}
-            <View style={styles.dividerRow}>
+            {/* <View style={styles.dividerRow}>
               <View style={styles.dividerWing} />
               <View style={styles.dividerCenter}>
                 <View style={styles.dividerGem} />
               </View>
               <View style={styles.dividerWing} />
-            </View>
+            </View> */}
 
             {/* Your Field */}
             <View style={[styles.fieldHalf, {
@@ -585,9 +587,10 @@ export const ArenaScreen = ({ route, navigation }: any) => {
                       </View>
                     ))
                   ) : (
-                    <Text style={styles.fieldEmptyText}>
-                      {isDraggingOverField ? 'Drop here!' : 'Drag cards here'}
-                    </Text>
+                    null
+                    // <Text style={styles.fieldEmptyText}>
+                    //   {isDraggingOverField ? 'Drop here!' : 'Drag cards here'}
+                    // </Text>
                   )}
                 </ScrollView>
               </View>
@@ -1054,9 +1057,9 @@ const styles = StyleSheet.create({
 
   // ============ HUD BAR ============
   hudBar: {
-    backgroundColor: 'rgba(10,6,4,0.85)',
-    borderBottomWidth: 2,
-    borderBottomColor: '#b8860b55',
+    backgroundColor: 'transparent',
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
   },
   hudInner: {
     flexDirection: 'row',
@@ -1244,41 +1247,41 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
 
-  // Ornamental divider
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 12,
-    zIndex: 2,
-    paddingHorizontal: 12,
-  },
-  dividerWing: {
-    flex: 1,
-    height: 2,
-    backgroundColor: '#b8860b',
-    shadowColor: '#f5c542',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 3,
-  },
-  dividerCenter: {
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 6,
-  },
-  dividerGem: {
-    width: 10,
-    height: 10,
-    backgroundColor: '#d4a44c',
-    borderRadius: 2,
-    transform: [{ rotate: '45deg' }],
-    shadowColor: '#f5c542',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 5,
-  },
+  // // Ornamental divider
+  // dividerRow: {
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   height: 12,
+  //   zIndex: 2,
+  //   paddingHorizontal: 12,
+  // },
+  // dividerWing: {
+  //   flex: 1,
+  //   height: 2,
+  //   backgroundColor: '#b8860b',
+  //   shadowColor: '#f5c542',
+  //   shadowOffset: { width: 0, height: 0 },
+  //   shadowOpacity: 0.6,
+  //   shadowRadius: 3,
+  // },
+  // dividerCenter: {
+  //   width: 20,
+  //   height: 20,
+  //   alignItems: 'center',
+  //   justifyContent: 'center',
+  //   marginHorizontal: 6,
+  // },
+  // dividerGem: {
+  //   width: 10,
+  //   height: 10,
+  //   backgroundColor: '#d4a44c',
+  //   borderRadius: 2,
+  //   transform: [{ rotate: '45deg' }],
+  //   shadowColor: '#f5c542',
+  //   shadowOffset: { width: 0, height: 0 },
+  //   shadowOpacity: 0.8,
+  //   shadowRadius: 5,
+  // },
 
   // Feedback & log
   actionFeedbackOverlay: {
@@ -1328,7 +1331,7 @@ const styles = StyleSheet.create({
   // Right edge (end turn)
   boardEdgeRight: {
     width: 70,
-    backgroundColor: 'rgba(10,6,4,0.6)',
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 12,
@@ -1368,9 +1371,9 @@ const styles = StyleSheet.create({
   // ============ HAND TRAY ============
   handTray: {
     height: 110,
-    backgroundColor: 'rgba(8,5,3,0.88)',
-    borderTopWidth: 2,
-    borderTopColor: '#b8860b66',
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
+    borderTopColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'flex-end',
     overflow: 'visible',
@@ -1380,7 +1383,7 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 6,
     borderWidth: 2,
-    backgroundColor: '#1a0e0a',
+    backgroundColor: 'rgba(26,14,10,0.75)',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 12,
