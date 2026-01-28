@@ -22,6 +22,8 @@ import ReanimatedAnimated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
+  withRepeat,
+  useDerivedValue,
   runOnJS,
 } from 'react-native-reanimated';
 import LottieView from 'lottie-react-native';
@@ -31,6 +33,7 @@ import { useConvexBattle } from '../hooks/useConvexBattle';
 import api from '../lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { Canvas, Circle, vec, RadialGradient } from '@shopify/react-native-skia';
 
 type AnimationType = 'slash' | 'fireball' | 'lightning' | 'rocket' | 'bomb' | 'threearrowdown' | 'exclamation' | 'thumbsup' | null;
 type CardType = 'PLAYER' | 'SPELL' | 'TRAP';
@@ -60,6 +63,57 @@ interface PlayedCard {
   card: any;
   cardType: CardType;
   action?: string;
+}
+
+const CANDLE_POSITIONS = [
+  { x: 40, y: 60 },    // top-left
+  { x: -40, y: 60 },   // top-right (negative = offset from right)
+  { x: 40, y: -40 },   // bottom-left (negative = offset from bottom)
+  { x: -40, y: -40 },  // bottom-right
+];
+
+function CandleEffects() {
+  const { width, height } = Dimensions.get('window');
+
+  const opacity1 = useSharedValue(0.3);
+  const opacity2 = useSharedValue(0.5);
+  const opacity3 = useSharedValue(0.4);
+  const opacity4 = useSharedValue(0.6);
+
+  useEffect(() => {
+    opacity1.value = withRepeat(withTiming(0.7, { duration: 800 }), -1, true);
+    opacity2.value = withRepeat(withTiming(0.7, { duration: 1100 }), -1, true);
+    opacity3.value = withRepeat(withTiming(0.7, { duration: 950 }), -1, true);
+    opacity4.value = withRepeat(withTiming(0.7, { duration: 1250 }), -1, true);
+  }, []);
+
+  const resolvedPositions = [
+    { x: 40, y: 60 },
+    { x: width - 40, y: 60 },
+    { x: 40, y: height - 40 },
+    { x: width - 40, y: height - 40 },
+  ];
+
+  const o1 = useDerivedValue(() => opacity1.value);
+  const o2 = useDerivedValue(() => opacity2.value);
+  const o3 = useDerivedValue(() => opacity3.value);
+  const o4 = useDerivedValue(() => opacity4.value);
+
+  const opacities = [o1, o2, o3, o4];
+
+  return (
+    <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+      {resolvedPositions.map((pos, i) => (
+        <Circle key={i} cx={pos.x} cy={pos.y} r={60} opacity={opacities[i]}>
+          <RadialGradient
+            c={vec(pos.x, pos.y)}
+            r={60}
+            colors={['#ff8c00cc', '#ff6a0066', '#ff450022', '#00000000']}
+          />
+        </Circle>
+      ))}
+    </Canvas>
+  );
 }
 
 export const ArenaScreen = ({ route, navigation }: any) => {
@@ -459,6 +513,9 @@ export const ArenaScreen = ({ route, navigation }: any) => {
         style={styles.root}
         resizeMode="cover"
       >
+        {/* Candle flicker overlay */}
+        <CandleEffects />
+
         {/* ===== TOP HUD BAR ===== */}
         <View style={styles.hudBar}>
           <View style={styles.hudInner}>
@@ -1377,6 +1434,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     overflow: 'visible',
+    position: 'relative',
   },
   drawPile: {
     width: 52,
@@ -1386,9 +1444,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(26,14,10,0.75)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 12,
-    marginBottom: 10,
-    position: 'relative',
+    position: 'absolute',
+    left: 12,
+    bottom: 10,
+    zIndex: 10,
   },
   drawPileIcon: {
     color: '#886644',
@@ -1412,7 +1471,7 @@ const styles = StyleSheet.create({
     borderColor: '#f5c54255',
   },
   handCardsArea: {
-    flex: 1,
+    width: '100%',
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'flex-end',
